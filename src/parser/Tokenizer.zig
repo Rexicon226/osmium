@@ -1,4 +1,5 @@
 const std = @import("std");
+const Regex = @import("regex").Regex;
 
 const Tokenizer = @This();
 
@@ -42,7 +43,7 @@ pub const Token = struct {
         tilde, // ~
 
         // Double Character
-        notequal, // !=
+        notequal, // !=, <>
         percentequal, // %=
         amperequal, // &=
         doublestar, // **
@@ -55,7 +56,6 @@ pub const Token = struct {
         colonequal, // :=
         leftshift, // <<
         lessequal, // <=
-        notequal, // <>
         eqequal, // ==
         greaterequal, // >=
         rightshift, // >>
@@ -72,6 +72,7 @@ pub const Token = struct {
 
         // Other
         op, // Operator
+        encoding,
     };
 
     pub fn debug(token: *const Token) !void {

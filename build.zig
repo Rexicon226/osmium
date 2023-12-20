@@ -11,6 +11,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Deps
+    const tracer_dep = b.dependency("regex", .{
+        .target = exe.target,
+    });
+    exe.addModule("regex", tracer_dep.module("regex"));
+
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
