@@ -1,9 +1,14 @@
 const std = @import("std");
 
-const Parser = @import("parser/Manager.zig");
+const Manager = @import("parser/Manager.zig");
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
+const gpa_allocator = gpa.allocator();
+
+var arena = std.heap.ArenaAllocator.init(gpa_allocator);
+const arena_allocator = arena.allocator();
+
+const log = std.log.scoped(.main);
 
 const ArgFlags = struct {
     file_path: ?[]const u8 = null,
@@ -27,11 +32,12 @@ fn usage() void {
 
 pub fn main() !u8 {
     defer {
+        arena.deinit();
         _ = gpa.deinit();
     }
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try std.process.argsAlloc(gpa_allocator);
+    defer std.process.argsFree(gpa_allocator, args);
 
     if (args.len > 2) {
         usage();
@@ -57,14 +63,12 @@ pub fn main() !u8 {
         }
     }
 
-    const log = std.log.scoped(.main);
-
     if (options.file_path) |file_path| {
-        var parser = try Parser.init(allocator);
+        var manager = try Manager.init(arena_allocator);
+        defer manager.deinit();
 
-        try parser.run_file(file_path);
+        try manager.run_file(file_path);
 
-        parser.deinit();
         return 0;
     }
 

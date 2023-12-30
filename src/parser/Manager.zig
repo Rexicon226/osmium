@@ -6,25 +6,22 @@ const Allocator = std.mem.Allocator;
 const Manager = @This();
 
 const Tokenizer = @import("Tokenizer.zig");
+const Parser = @import("Parser.zig");
+const bytecode = @import("bytecode.zig");
 
 const log = std.log.scoped(.parser);
 
 allocator: Allocator,
-source: [:0]const u8,
 
 pub fn init(allocator: Allocator) !Manager {
     return .{
         .allocator = allocator,
-        .source = undefined,
     };
 }
 
-pub fn deinit(manager: *Manager) void {
-    manager.allocator.free(manager.source);
-}
+pub fn deinit(_: *Manager) void {}
 
 pub fn run_file(manager: *Manager, file_name: []const u8) !void {
-
     // Open source file.
     const source_file = try std.fs.cwd().openFile(file_name, .{});
 
@@ -38,10 +35,22 @@ pub fn run_file(manager: *Manager, file_name: []const u8) !void {
         0,
     );
 
-    manager.source = source;
+    log.debug("Contents:\n{s}", .{source});
 
-    log.debug("Contents: {s}\n", .{manager.source});
+    var parser = try Parser.init(manager.allocator);
+    defer parser.deinit();
 
-    var tokenizer = try Tokenizer.init(manager.allocator, manager.source);
-    tokenizer.deinit();
+    const module = try parser.parse(source);
+
+    for (module.Module.body) |stat| {
+        log.debug("{}", .{stat});
+    }
+
+    // Compile to bytecode
+    var object = bytecode.CodeObject.init(manager.allocator);
+    defer object.deinit();
+
+    try object.translate(module);
+
+    try object.dump();
 }

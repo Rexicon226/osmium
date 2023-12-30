@@ -7,10 +7,13 @@ const testing = std.testing;
 
 const Tokenizer = @This();
 
+const log = std.log.scoped(.tokenizer);
+
+const TokenizerError = error{ OutOfMemory, UnexpectedEOF, UnexpectedToken };
+
 allocator: std.mem.Allocator,
-arena: std.heap.ArenaAllocator,
 tokens: Tokens,
-source: []const u8,
+source: [:0]const u8,
 offset: usize = 0,
 line: usize = 0,
 column: usize = 0,
@@ -161,23 +164,38 @@ pub const SymbolMap = std.ComptimeStringMap(Kind, .{
 // =================================================================
 
 /// Creates a new tokenizer that will tokenize the given source.
-pub fn init(allocator: std.mem.Allocator, source: []const u8) !Tokenizer {
+pub fn init(allocator: std.mem.Allocator, source: [:0]const u8) !Tokenizer {
     return .{
         .allocator = allocator,
-        .arena = std.heap.ArenaAllocator.init(allocator),
         .source = source,
         .tokens = Tokens{},
     };
 }
 
 /// Deinitializes the tokenizer.
-pub fn deinit(self: *Tokenizer) void {
-    self.arena.deinit();
-    self.tokens.deinit(self.allocator);
+pub fn deinit(tokenizer: *Tokenizer) void {
+    tokenizer.tokens.deinit(tokenizer.allocator);
+}
+
+/// Parses the input, and returns a list of tokens
+pub fn parse(tokenizer: *Tokenizer) ![]Token {
+    var tokens = std.ArrayList(Token).init(tokenizer.allocator);
+
+    while (true) {
+        const token_id = tokenizer.nextToken() catch |e| {
+            if (e == error.UnexpectedEOF) break;
+            return e;
+        };
+
+        const token = tokenizer.tokens.get(token_id);
+        try tokens.append(token);
+    }
+
+    return try tokens.toOwnedSlice();
 }
 
 /// Parses the next token in the source.
-pub fn nextToken(self: *Tokenizer) !TokenIndex {
+pub fn nextToken(self: *Tokenizer) TokenizerError!TokenIndex {
     // TODO(SeedyROM): This is bad, I should feel bad.
     if (self.checkEOF()) {
         return error.UnexpectedEOF;
@@ -231,7 +249,7 @@ inline fn lastToken(self: *Tokenizer) TokenIndex {
     return self.tokens.len - 1;
 }
 
-inline fn checkEOF(self: *Tokenizer) bool {
+pub inline fn checkEOF(self: *Tokenizer) bool {
     return self.offset >= self.source.len;
 }
 
@@ -428,22 +446,12 @@ fn testTokenizer(allocator: std.mem.Allocator, source: []const u8, expected: []c
     var tokenizer = try init(allocator, source);
     defer tokenizer.deinit();
 
-    var tokens = std.ArrayList(Token).init(allocator);
-    defer tokens.deinit();
+    const tokens = try tokenizer.parse();
+    defer allocator.free(tokens);
 
-    while (true) {
-        const token_id = tokenizer.nextToken() catch |e| {
-            if (e == error.UnexpectedEOF) break;
-            return e;
-        };
-
-        const token = tokenizer.tokens.get(token_id);
-        try tokens.append(token);
-    }
-
-    try testing.expectEqual(expected.len, tokens.items.len);
-    for (0..tokens.items.len) |i| {
-        const token = tokens.items[i];
+    try testing.expectEqual(expected.len, tokens.len);
+    for (0..tokens.len) |i| {
+        const token = tokens[i];
         const expected_token = expected[i];
 
         try testing.expectEqual(expected_token.kind, token.kind);
