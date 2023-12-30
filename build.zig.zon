@@ -2,12 +2,7 @@
     .name = "osmium",
     .version = "0.0.0",
 
-    .dependencies = .{
-        .regex = .{
-            .url = "https://github.com/Rexicon226/zig-regex/archive/e344ee874317f14830cf9366c3fe11d891a779e1.tar.gz",
-            .hash = "122012d5e72dd23d759bc41170c6820e8e163d50f729c4d60efcfc3ec7bd94b5b119",
-        },
-    },
+    .dependencies = .{},
 
     .paths = .{""},
 }

@@ -62,7 +62,7 @@ pub fn main() !u8 {
     if (options.file_path) |file_path| {
         var parser = try Parser.init(allocator);
 
-        try parser.parse(file_path);
+        try parser.run_file(file_path);
 
         parser.deinit();
         return 0;

@@ -11,12 +11,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Deps
-    const tracer_dep = b.dependency("regex", .{
-        .target = exe.target,
-    });
-    exe.addModule("regex", tracer_dep.module("regex"));
-
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -29,12 +23,12 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = .{ .path = "src/tests.zig" },
         .target = target,
         .optimize = optimize,
     });
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
-    const test_step = b.step("test", "Run unit tests");
+    const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_unit_tests.step);
 }

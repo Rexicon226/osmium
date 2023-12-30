@@ -1,3 +1,5 @@
+//! Controls the data flow between different components of Osmium.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -17,11 +19,11 @@ pub fn init(allocator: Allocator) !Manager {
     };
 }
 
-pub fn deinit(parser: *Manager) void {
-    parser.allocator.free(parser.source);
+pub fn deinit(manager: *Manager) void {
+    manager.allocator.free(manager.source);
 }
 
-pub fn parse(parser: *Manager, file_name: []const u8) !void {
+pub fn run_file(manager: *Manager, file_name: []const u8) !void {
 
     // Open source file.
     const source_file = try std.fs.cwd().openFile(file_name, .{});
@@ -29,21 +31,17 @@ pub fn parse(parser: *Manager, file_name: []const u8) !void {
     const source_file_size = (try source_file.stat()).size;
 
     const source = try source_file.readToEndAllocOptions(
-        parser.allocator,
+        manager.allocator,
         source_file_size,
         source_file_size,
         @alignOf(u8),
         0,
     );
 
-    parser.source = source;
+    manager.source = source;
 
-    log.debug("Contents: {s}\n", .{parser.source});
+    log.debug("Contents: {s}\n", .{manager.source});
 
-    var tokenizer = Tokenizer.init(parser.allocator);
-    defer tokenizer.deinit();
-
-    try tokenizer.tokenize(parser.source);
-
-    try tokenizer.dump();
+    var tokenizer = try Tokenizer.init(manager.allocator, manager.source);
+    tokenizer.deinit();
 }
