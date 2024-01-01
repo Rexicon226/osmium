@@ -31,7 +31,7 @@ pub const CodeObject = struct {
                 .Break => try object.addInstruction(.Break),
 
                 .Expr => |expr| {
-                    try object.translate_expression(expr);
+                    try object.expression(expr);
 
                     // I am 90% sure this is needed, but I need to figure out why.
                     // try object.addInstruction(.Pop);
@@ -40,7 +40,7 @@ pub const CodeObject = struct {
         }
     }
 
-    pub fn translate_expression(object: *CodeObject, expr: Ast.Expression) !void {
+    pub fn expression(object: *CodeObject, expr: Ast.Expression) !void {
         log.debug("expression: {s}", .{@tagName(expr)});
 
         switch (expr) {
@@ -54,14 +54,25 @@ pub const CodeObject = struct {
             },
 
             .Call => |call| {
-                try object.translate_expression(call.func.*);
+                try object.expression(call.func.*);
 
                 for (call.args) |arg| {
-                    try object.translate_expression(arg);
+                    try object.expression(arg);
                 }
 
                 const inst = Instruction.callFunction(call.args.len);
                 try object.addInstruction(inst);
+            },
+
+            .BinOp => |bin_op| {
+                try object.expression(bin_op.left.*);
+                try object.expression(bin_op.right.*);
+
+                switch (bin_op.op) {
+                    .Add => try object.addInstruction(.BinaryAdd),
+                    .Sub => try object.addInstruction(.BinarySubtract),
+                    else => std.debug.panic("TODO OP: {s}", .{@tagName(bin_op.op)}),
+                }
             },
 
             else => std.debug.panic("TODO: {s}", .{@tagName(expr)}),

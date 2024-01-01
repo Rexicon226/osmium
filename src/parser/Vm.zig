@@ -84,6 +84,22 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             }
         },
 
+        // Math stuff
+        .BinaryAdd => {
+            const lhs = vm.stack.pop();
+            const rhs = vm.stack.pop();
+            if (lhs == .value) {
+                if (rhs == .value) {
+                    const result = lhs.value + rhs.value;
+                    try vm.stack.append(ScopeObject.newVal(result));
+                } else {
+                    @panic("rhs bin add not value");
+                }
+            } else {
+                @panic("lhs bin add not value");
+            }
+        },
+
         else => log.warn("TODO: {s}", .{@tagName(inst)}),
     }
 }
