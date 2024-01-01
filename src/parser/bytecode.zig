@@ -60,7 +60,8 @@ pub const CodeObject = struct {
                     try object.translate_expression(arg);
                 }
 
-                try object.addInstruction(.CallFunction);
+                const inst = Instruction.callFunction(call.args.len);
+                try object.addInstruction(inst);
             },
 
             else => std.debug.panic("TODO: {s}", .{@tagName(expr)}),
@@ -103,8 +104,11 @@ pub const Instruction = union(enum) {
     Pass: void,
     Continue: void,
     Break: void,
-    CallFunction: void,
+    CallFunction: struct { arg_count: usize },
     ReturnValue: void,
+
+    BinaryAdd: void,
+    BinarySubtract: void,
 
     pub fn loadConst(value: i32) Instruction {
         return .{
@@ -118,6 +122,14 @@ pub const Instruction = union(enum) {
         return .{
             .LoadName = .{
                 .name = name,
+            },
+        };
+    }
+
+    pub fn callFunction(arg_count: usize) Instruction {
+        return .{
+            .CallFunction = .{
+                .arg_count = arg_count,
             },
         };
     }

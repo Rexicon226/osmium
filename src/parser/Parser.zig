@@ -49,6 +49,19 @@ pub fn parse(parser: *Parser, source: [:0]const u8) !Ast.Root {
     };
 }
 
+/// A completely isolated parser that blindly parses a set of tokens into an expression.
+pub fn parseToken(allocator: Allocator, token: Token) !*Ast.Expression {
+    var parser = try Parser.init(allocator);
+
+    const tokens = try allocator.alloc(Token, 2);
+    tokens[0] = token;
+    tokens[1] = .{ .data = undefined, .kind = .eof };
+
+    parser.tokens = tokens;
+
+    return try parser.expression(token);
+}
+
 /// Parses a token as needed, and returns a list of Statements.
 fn statement(parser: *Parser, token: Token) ParserError!Ast.Statement {
     switch (token.kind) {
@@ -63,34 +76,78 @@ fn statement(parser: *Parser, token: Token) ParserError!Ast.Statement {
 }
 
 fn expression(parser: *Parser, token: Token) ParserError!*Ast.Expression {
-    const expr = try parser.add(token);
+    const kind = token.kind;
 
-    // if (kind == .identifier) {
-    //     const ident = token.data;
+    if (kind == .identifier) {
+        const ident = token.data;
 
-    //     parser.skip(.identifier);
+        parser.skip(.identifier);
 
-    //     // Is it a function call
-    //     if (tokens[parser.index].kind == .lparen) {
-    //         parser.skip(.lparen);
+        // Is it a function call
+        if (parser.tokens[parser.index].kind == .lparen) {
+            parser.skip(.lparen);
 
-    //         // TODO(Sinon): Assume only one argument for now. Add commas later.
-    //         var arg_index: u32 = 0;
-    //         while (parser.tokens[arg_index].kind != .rparen) : (arg_index += 1) {}
+            // First, get the slice of the arguments.
+            var r_paren_index: u32 = parser.index;
+            while (parser.tokens[r_paren_index].kind != .rparen) : (r_paren_index += 1) {
+                if (r_paren_index == parser.tokens.len - 1) {
+                    @panic("expected r paren");
+                }
+            }
 
-    //         // Parse whatever was in there.
-    //         const arg = undefined;
+            const arg_slice = parser.tokens[parser.index..r_paren_index];
 
-    //         const func_ident = try parser.allocator.create(Ast.Expression);
-    //         func_ident.* = Ast.Expression.newIdentifer(ident);
+            parser.index += r_paren_index;
 
-    //         parser.skip(.rparen);
+            // Now we want to parse based on commas the start token of each arg.
+            // i.e
+            // print(1, 2 + 3)
+            //
+            // this would be 2 arguments, the first one would be the index of "1".
+            // the second one would be the index of "2", which then would be run through parser.expression
+            // to generate the BinOp for the addition.
 
-    //         return Ast.Expression.newCall(func_ident, &.{arg});
-    //     }
-    // }
+            var arg_token_index = std.ArrayList(@TypeOf(parser.index)).init(parser.allocator);
+            var arg_index: u32 = 0;
 
-    return expr;
+            while (arg_index < arg_slice.len) {
+                // Skip commas
+                while (arg_index < arg_slice.len and arg_slice[arg_index].kind == .comma) {
+                    arg_index += 1;
+                }
+
+                // Is there something after the comma
+                if (arg_index < arg_slice.len) {
+                    try arg_token_index.append(arg_index);
+
+                    // Skip the rest of the arg till the next
+                    while (arg_index < arg_slice.len and arg_slice[arg_index].kind != .comma) {
+                        arg_index += 1;
+                    }
+                }
+            }
+
+            var arg_tokens = std.ArrayList(Token).init(parser.allocator);
+
+            for (arg_token_index.items) |index| {
+                try arg_tokens.append(arg_slice[index]);
+            }
+
+            var args = std.ArrayList(Ast.Expression).init(parser.allocator);
+
+            for (arg_tokens.items) |arg_token| {
+                try args.append((try parseToken(parser.allocator, arg_token)).*);
+            }
+
+            const func_ident = try Ast.Expression.newIdentifer(ident, parser.allocator);
+
+            return Ast.Expression.newCall(func_ident, args.items, parser.allocator);
+        }
+
+        @panic("ident without lparen not supported");
+    }
+
+    return try parser.add(token);
 }
 
 fn add(parser: *Parser, token: Token) ParserError!*Ast.Expression {
@@ -142,7 +199,7 @@ fn primary(parser: *Parser, token: Token) ParserError!*Ast.Expression {
     }
 
     log.err("uh oh, Found: {}", .{kind});
-    std.os.exit(1);
+    unreachable;
 }
 
 /// Verifys the next token is kind, and moves forwards one.

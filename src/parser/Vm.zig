@@ -64,11 +64,13 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
         .Pop => _ = vm.stack.pop(),
         .ReturnValue => _ = vm.stack.pop(),
 
-        .CallFunction => {
+        .CallFunction => |call_function| {
             // TODO(Sinon): Add ability to have more than one arg
-            var args = std.ArrayList(ScopeObject).init(vm.allocator);
-            defer args.deinit();
-            try args.append(vm.stack.pop());
+            var args = try vm.allocator.alloc(ScopeObject, call_function.arg_count);
+
+            for (0..args.len) |i| {
+                args[args.len - i - 1] = vm.stack.pop();
+            }
 
             const function = vm.stack.pop();
 
@@ -76,7 +78,7 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             if (function == .zig_function) {
                 const ref = function.zig_function;
 
-                @call(.auto, ref, .{args.items});
+                @call(.auto, ref, .{args});
             } else {
                 std.debug.panic("callFunction ref is not zig_function", .{});
             }
