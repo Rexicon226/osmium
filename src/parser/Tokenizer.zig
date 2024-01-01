@@ -25,7 +25,6 @@ pub const Kind = enum {
     identifier,
 
     // Whitespace
-    space,
     tab,
     newline,
 
@@ -78,6 +77,9 @@ pub const Kind = enum {
     dot,
     semicolon,
     at,
+
+    // Extra
+    eof,
 };
 
 /// A token aka slice of data inside the source.
@@ -189,6 +191,8 @@ pub fn parse(tokenizer: *Tokenizer) ![]Token {
         try tokens.append(token);
     }
 
+    try tokens.append(.{ .data = undefined, .kind = .eof });
+
     for (tokens.items) |token| {
         log.debug("Token: {}", .{token.kind});
     }
@@ -206,6 +210,12 @@ pub fn nextTokenIndex(self: *Tokenizer) TokenizerError!TokenIndex {
     // TODO(SeedyROM): This is bad, I should feel bad.
     if (self.checkEOF()) {
         return error.UnexpectedEOF;
+    }
+
+    // Ignore spaces for now.
+    if (self.source[self.offset] == ' ') {
+        self.offset += 1;
+        return self.nextTokenIndex();
     }
 
     // If we're at a whitespace, we're parsing a whitespace
@@ -275,7 +285,6 @@ fn whitespace(self: *Tokenizer) !TokenIndex {
     // Parse the whitespace
     const value = self.source[self.offset];
     const kind = switch (value) {
-        ' ' => Kind.space,
         '\t' => Kind.tab,
         '\n' => Kind.newline,
         else => return error.UnexpectedToken,
@@ -557,18 +566,6 @@ test "identifier" {
     );
 }
 
-test "space whitespace" {
-    const source = " ";
-
-    try testTokenizer(
-        testing.allocator,
-        source,
-        &.{
-            .{ .kind = Kind.space, .data = source },
-        },
-    );
-}
-
 test "tab whitespace" {
     const source = "\t";
 
@@ -632,7 +629,7 @@ test "operators" {
 test "simple expression" {
     const source =
         \\if x == 5:
-        \\  x+=15zzz
+        \\  x+=15
         \\  print(x)
     ;
 

@@ -97,4 +97,19 @@ pub const ScopeObject = union(enum) {
             .value = value,
         };
     }
+
+    pub fn format(
+        self: ScopeObject,
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        std.debug.assert(fmt.len == 0);
+
+        switch (self) {
+            .value => |val| try writer.print("{}", .{val}),
+            .string => |string| try writer.print("{s}", .{string}),
+            .zig_function => @panic("cannot print function ScopeObject"),
+        }
+    }
 };
