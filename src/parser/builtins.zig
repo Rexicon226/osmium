@@ -11,6 +11,6 @@ fn print(args: []vm.ScopeObject) void {
     const stdout = std.io.getStdOut().writer();
 
     for (args) |arg| {
-        stdout.print("{}", .{arg}) catch @panic("failed to builtin print");
+        stdout.print("{}\n", .{arg}) catch @panic("failed to builtin print");
     }
 }

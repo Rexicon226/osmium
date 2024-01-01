@@ -189,6 +189,10 @@ pub fn parse(tokenizer: *Tokenizer) ![]Token {
         try tokens.append(token);
     }
 
+    for (tokens.items) |token| {
+        log.debug("Token: {}", .{token.kind});
+    }
+
     return try tokens.toOwnedSlice();
 }
 
@@ -246,11 +250,6 @@ pub fn nextTokenIndex(self: *Tokenizer) TokenizerError!TokenIndex {
 
 fn lastToken(self: *Tokenizer) TokenIndex {
     return self.tokens.len - 1;
-}
-
-// Returns the Kind of the next token, without advancing the index.
-pub fn peak(self: *Tokenizer) Kind {
-    return self.tokens.get(self.offset + 1).kind;
 }
 
 pub fn checkEOF(self: *Tokenizer) bool {

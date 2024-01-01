@@ -32,6 +32,8 @@ fn usage() void {
 
 pub fn main() !u8 {
     defer {
+        log.debug("memory usage: {}", .{arena.state.end_index});
+
         arena.deinit();
         _ = gpa.deinit();
     }

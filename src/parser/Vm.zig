@@ -50,7 +50,37 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             const obj = ScopeObject.newVal(load_const.value);
             try vm.stack.append(obj);
         },
+        .LoadName => |load_name| {
+            // Find the name in the scope, and add it to the stack.
+            const scope_ref = vm.scope.get(load_name.name);
+
+            if (scope_ref) |ref| {
+                try vm.stack.append(ref);
+            } else {
+                std.debug.panic("loadName {s} not found in the scope", .{load_name.name});
+            }
+        },
+
         .Pop => _ = vm.stack.pop(),
+        .ReturnValue => _ = vm.stack.pop(),
+
+        .CallFunction => {
+            // TODO(Sinon): Add ability to have more than one arg
+            var args = std.ArrayList(ScopeObject).init(vm.allocator);
+            defer args.deinit();
+            try args.append(vm.stack.pop());
+
+            const function = vm.stack.pop();
+
+            // Only builtins supported.
+            if (function == .zig_function) {
+                const ref = function.zig_function;
+
+                @call(.auto, ref, .{args.items});
+            } else {
+                std.debug.panic("callFunction ref is not zig_function", .{});
+            }
+        },
 
         else => log.warn("TODO: {s}", .{@tagName(inst)}),
     }

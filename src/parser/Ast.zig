@@ -14,16 +14,6 @@ pub const Statement = union(enum) {
     Continue: void,
     Pass: void,
     Expr: Expression,
-
-    pub fn newNumber(val: i32) Statement {
-        return .{
-            .Expr = .{
-                .Number = .{
-                    .value = val,
-                },
-            },
-        };
-    }
 };
 
 pub const Expression = union(enum) {
@@ -49,6 +39,31 @@ pub const Expression = union(enum) {
     Identifier: struct {
         name: []const u8,
     },
+
+    pub fn newCall(func: *Expression, args: []Expression) Expression {
+        return .{
+            .Call = .{
+                .func = func,
+                .args = args,
+            },
+        };
+    }
+
+    pub fn newIdentifer(name: []const u8) Expression {
+        return .{
+            .Identifier = .{
+                .name = name,
+            },
+        };
+    }
+
+    pub fn newNumber(val: i32) Expression {
+        return .{
+            .Number = .{
+                .value = val,
+            },
+        };
+    }
 };
 
 pub const UnaryOp = enum {

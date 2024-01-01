@@ -32,7 +32,9 @@ pub const CodeObject = struct {
 
                 .Expr => |expr| {
                     try object.translate_expression(expr);
-                    try object.addInstruction(.Pop);
+
+                    // I am 90% sure this is needed, but I need to figure out why.
+                    // try object.addInstruction(.Pop);
                 },
             }
         }
@@ -46,6 +48,21 @@ pub const CodeObject = struct {
                 const inst = Instruction.loadConst(number.value);
                 try object.addInstruction(inst);
             },
+            .Identifier => |ident| {
+                const inst = Instruction.loadName(ident.name);
+                try object.addInstruction(inst);
+            },
+
+            .Call => |call| {
+                try object.translate_expression(call.func.*);
+
+                for (call.args) |arg| {
+                    try object.translate_expression(arg);
+                }
+
+                try object.addInstruction(.CallFunction);
+            },
+
             else => std.debug.panic("TODO: {s}", .{@tagName(expr)}),
         }
     }
@@ -90,8 +107,18 @@ pub const Instruction = union(enum) {
     ReturnValue: void,
 
     pub fn loadConst(value: i32) Instruction {
-        return .{ .LoadConst = .{
-            .value = value,
-        } };
+        return .{
+            .LoadConst = .{
+                .value = value,
+            },
+        };
+    }
+
+    pub fn loadName(name: []const u8) Instruction {
+        return .{
+            .LoadName = .{
+                .name = name,
+            },
+        };
     }
 };
