@@ -89,6 +89,10 @@ pub const Data = []const u8;
 pub const Token = struct {
     kind: Kind,
     data: Data,
+
+    pub fn eql(lhs: Token, rhs: Token) bool {
+        return lhs.kind == rhs.kind;
+    }
 };
 
 /// The list of tokens.

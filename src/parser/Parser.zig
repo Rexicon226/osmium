@@ -1,11 +1,14 @@
 //! Inputs a list of tokens, and outputs an Ast.
 
 const std = @import("std");
+const std_extras = @import("std-extras");
 
 const Allocator = std.mem.Allocator;
 
 const Tokenizer = @import("Tokenizer.zig");
 const Ast = @import("Ast.zig");
+
+const Expression = Ast.Expression;
 
 const Token = Tokenizer.Token;
 
@@ -50,16 +53,17 @@ pub fn parse(parser: *Parser, source: [:0]const u8) !Ast.Root {
 }
 
 /// A completely isolated parser that blindly parses a set of tokens into an expression.
-pub fn parseToken(allocator: Allocator, token: Token) !*Ast.Expression {
+pub fn parseTokens(allocator: Allocator, tokens: []const Token) !*Expression {
     var parser = try Parser.init(allocator);
 
-    const tokens = try allocator.alloc(Token, 2);
-    tokens[0] = token;
-    tokens[1] = .{ .data = undefined, .kind = .eof };
+    const parser_tokens = try allocator.alloc(Token, tokens.len + 1);
+    @memcpy(parser_tokens[0..tokens.len], tokens);
 
-    parser.tokens = tokens;
+    parser_tokens[tokens.len] = .{ .data = undefined, .kind = .eof };
 
-    return try parser.expression(token);
+    parser.tokens = parser_tokens;
+
+    return try parser.expression(parser_tokens[0]);
 }
 
 /// Parses a token as needed, and returns a list of Statements.
@@ -75,7 +79,7 @@ fn statement(parser: *Parser, token: Token) ParserError!Ast.Statement {
     return .{ .Expr = (try parser.expression(token)).* };
 }
 
-fn expression(parser: *Parser, token: Token) ParserError!*Ast.Expression {
+fn expression(parser: *Parser, token: Token) ParserError!*Expression {
     const kind = token.kind;
 
     if (kind == .identifier) {
@@ -87,7 +91,6 @@ fn expression(parser: *Parser, token: Token) ParserError!*Ast.Expression {
         if (parser.tokens[parser.index].kind == .lparen) {
             parser.skip(.lparen);
 
-            // First, get the slice of the arguments.
             var r_paren_index: u32 = parser.index;
             while (parser.tokens[r_paren_index].kind != .rparen) : (r_paren_index += 1) {
                 if (r_paren_index == parser.tokens.len - 1) {
@@ -96,52 +99,23 @@ fn expression(parser: *Parser, token: Token) ParserError!*Ast.Expression {
             }
 
             const arg_slice = parser.tokens[parser.index..r_paren_index];
-
             parser.index += r_paren_index;
 
-            // Now we want to parse based on commas the start token of each arg.
-            // i.e
-            // print(1, 2 + 3)
-            //
-            // this would be 2 arguments, the first one would be the index of "1".
-            // the second one would be the index of "2", which then would be run through parser.expression
-            // to generate the BinOp for the addition.
+            var args_iter = std_extras.mem.tokenizeScalar(
+                Token,
+                arg_slice,
+                .{ .data = ",", .kind = .comma },
+                Token.eql,
+            );
+            var args = std.ArrayList(Expression).init(parser.allocator);
 
-            var arg_token_index = std.ArrayList(@TypeOf(parser.index)).init(parser.allocator);
-            var arg_index: u32 = 0;
-
-            while (arg_index < arg_slice.len) {
-                // Skip commas
-                while (arg_index < arg_slice.len and arg_slice[arg_index].kind == .comma) {
-                    arg_index += 1;
-                }
-
-                // Is there something after the comma
-                if (arg_index < arg_slice.len) {
-                    try arg_token_index.append(arg_index);
-
-                    // Skip the rest of the arg till the next
-                    while (arg_index < arg_slice.len and arg_slice[arg_index].kind != .comma) {
-                        arg_index += 1;
-                    }
-                }
+            while (args_iter.next()) |arg| {
+                try args.append((try parseTokens(parser.allocator, arg)).*);
             }
 
-            var arg_tokens = std.ArrayList(Token).init(parser.allocator);
+            const func_ident = try Expression.newIdentifer(ident, parser.allocator);
 
-            for (arg_token_index.items) |index| {
-                try arg_tokens.append(arg_slice[index]);
-            }
-
-            var args = std.ArrayList(Ast.Expression).init(parser.allocator);
-
-            for (arg_tokens.items) |arg_token| {
-                try args.append((try parseToken(parser.allocator, arg_token)).*);
-            }
-
-            const func_ident = try Ast.Expression.newIdentifer(ident, parser.allocator);
-
-            return Ast.Expression.newCall(func_ident, args.items, parser.allocator);
+            return Expression.newCall(func_ident, args.items, parser.allocator);
         }
 
         @panic("ident without lparen not supported");
@@ -150,13 +124,13 @@ fn expression(parser: *Parser, token: Token) ParserError!*Ast.Expression {
     return try parser.add(token);
 }
 
-fn add(parser: *Parser, token: Token) ParserError!*Ast.Expression {
+fn add(parser: *Parser, token: Token) ParserError!*Expression {
     var expr = try parser.mul(token);
 
     while (true) {
         if (parser.nextToken().kind == .op_plus) {
             parser.skip(.op_plus);
-            expr = try Ast.Expression.newBinOp(
+            expr = try Expression.newBinOp(
                 expr,
                 .Add,
                 try parser.mul(parser.nextToken()),
@@ -171,7 +145,7 @@ fn add(parser: *Parser, token: Token) ParserError!*Ast.Expression {
     unreachable;
 }
 
-fn mul(parser: *Parser, token: Token) ParserError!*Ast.Expression {
+fn mul(parser: *Parser, token: Token) ParserError!*Expression {
     const expr = try parser.primary(token);
 
     // TODO multiplication
@@ -179,7 +153,7 @@ fn mul(parser: *Parser, token: Token) ParserError!*Ast.Expression {
     return expr;
 }
 
-fn primary(parser: *Parser, token: Token) ParserError!*Ast.Expression {
+fn primary(parser: *Parser, token: Token) ParserError!*Expression {
     const kind = token.kind;
 
     if (kind == .lparen) {
@@ -190,7 +164,7 @@ fn primary(parser: *Parser, token: Token) ParserError!*Ast.Expression {
     }
 
     if (kind == .number) {
-        const expr = Ast.Expression.newNumber(
+        const expr = Expression.newNumber(
             try std.fmt.parseInt(i32, token.data, 10),
             parser.allocator,
         );
