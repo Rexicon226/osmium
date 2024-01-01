@@ -8,6 +8,7 @@ const Manager = @This();
 const Tokenizer = @import("Tokenizer.zig");
 const Parser = @import("Parser.zig");
 const bytecode = @import("bytecode.zig");
+const Vm = @import("Vm.zig");
 
 const log = std.log.scoped(.parser);
 
@@ -53,4 +54,10 @@ pub fn run_file(manager: *Manager, file_name: []const u8) !void {
     try object.translate(module);
 
     try object.dump();
+
+    // Run the bytecode.
+    var vm = try Vm.init(manager.allocator);
+    defer vm.deinit();
+
+    try vm.run(object);
 }
