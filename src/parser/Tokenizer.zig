@@ -182,20 +182,23 @@ pub fn parse(tokenizer: *Tokenizer) ![]Token {
     var tokens = std.ArrayList(Token).init(tokenizer.allocator);
 
     while (true) {
-        const token_id = tokenizer.nextToken() catch |e| {
+        const token = tokenizer.nextToken() catch |e| {
             if (e == error.UnexpectedEOF) break;
             return e;
         };
-
-        const token = tokenizer.tokens.get(token_id);
         try tokens.append(token);
     }
 
     return try tokens.toOwnedSlice();
 }
 
-/// Parses the next token in the source.
-pub fn nextToken(self: *Tokenizer) TokenizerError!TokenIndex {
+pub fn nextToken(self: *Tokenizer) TokenizerError!Token {
+    const token_id = try self.nextTokenIndex();
+    return self.tokens.get(token_id);
+}
+
+/// Parses the next token index in the source.
+pub fn nextTokenIndex(self: *Tokenizer) TokenizerError!TokenIndex {
     // TODO(SeedyROM): This is bad, I should feel bad.
     if (self.checkEOF()) {
         return error.UnexpectedEOF;
@@ -241,19 +244,20 @@ pub fn nextToken(self: *Tokenizer) TokenizerError!TokenIndex {
     return error.UnexpectedToken;
 }
 
-// =================================================================
-// Inline functions
-// =================================================================
-
-inline fn lastToken(self: *Tokenizer) TokenIndex {
+fn lastToken(self: *Tokenizer) TokenIndex {
     return self.tokens.len - 1;
 }
 
-pub inline fn checkEOF(self: *Tokenizer) bool {
+// Returns the Kind of the next token, without advancing the index.
+pub fn peak(self: *Tokenizer) Kind {
+    return self.tokens.get(self.offset + 1).kind;
+}
+
+pub fn checkEOF(self: *Tokenizer) bool {
     return self.offset >= self.source.len;
 }
 
-inline fn advance(self: *Tokenizer) void {
+fn advance(self: *Tokenizer) void {
     if (self.source[self.offset] == '\n') {
         self.line += 1;
         self.column = 0;
@@ -268,7 +272,7 @@ inline fn advance(self: *Tokenizer) void {
 // =================================================================
 
 /// Parses a whitespace token.
-inline fn whitespace(self: *Tokenizer) !TokenIndex {
+fn whitespace(self: *Tokenizer) !TokenIndex {
     // Parse the whitespace
     const value = self.source[self.offset];
     const kind = switch (value) {
@@ -284,7 +288,7 @@ inline fn whitespace(self: *Tokenizer) !TokenIndex {
 }
 
 /// Parses a number.
-inline fn number(self: *Tokenizer) !TokenIndex {
+fn number(self: *Tokenizer) !TokenIndex {
     // Parse the number
     const start = self.offset;
 
@@ -353,7 +357,7 @@ inline fn number(self: *Tokenizer) !TokenIndex {
 }
 
 /// Parses an identifier.
-inline fn identifier(self: *Tokenizer) !TokenIndex {
+fn identifier(self: *Tokenizer) !TokenIndex {
     // Parse the identifier
     const start = self.offset;
     while (std.ascii.isAlphabetic(self.source[self.offset])) {
@@ -370,7 +374,7 @@ inline fn identifier(self: *Tokenizer) !TokenIndex {
 
 /// Parses an operator.
 // TODO(SeedyROM): Clean this up.
-inline fn operator(self: *Tokenizer) !TokenIndex {
+fn operator(self: *Tokenizer) !TokenIndex {
     const start = self.offset;
 
     if (self.source[start] == '=') {
@@ -428,7 +432,7 @@ inline fn operator(self: *Tokenizer) !TokenIndex {
     }
 }
 
-inline fn symbol(self: *Tokenizer) !TokenIndex {
+fn symbol(self: *Tokenizer) !TokenIndex {
     if (SymbolMap.get(&.{self.source[self.offset]})) |kind| {
         const data = self.source[self.offset .. self.offset + 1];
         const token = Token{ .kind = kind, .data = data };

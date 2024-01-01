@@ -14,6 +14,16 @@ pub const Statement = union(enum) {
     Continue: void,
     Pass: void,
     Expr: Expression,
+
+    pub fn newNumber(val: i32) Statement {
+        return .{
+            .Expr = .{
+                .Number = .{
+                    .value = val,
+                },
+            },
+        };
+    }
 };
 
 pub const Expression = union(enum) {
@@ -32,6 +42,12 @@ pub const Expression = union(enum) {
     },
     Number: struct {
         value: i32,
+    },
+    String: struct {
+        value: []const u8,
+    },
+    Identifier: struct {
+        name: []const u8,
     },
 };
 

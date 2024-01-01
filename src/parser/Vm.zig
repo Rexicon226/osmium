@@ -33,7 +33,8 @@ pub fn deinit(vm: *Vm) void {
 pub fn run(vm: *Vm, object: CodeObject) !void {
     // Add the builtins to the scope.
     inline for (builtins.builtin_fns) |builtin_fn| {
-        try vm.scope.put(builtin_fn[0], .{ .zig_function = builtin_fn[1] });
+        const name, const ref = builtin_fn;
+        try vm.scope.put(name, .{ .zig_function = ref });
     }
 
     for (object.instructions.items) |inst| {

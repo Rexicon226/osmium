@@ -72,8 +72,15 @@ pub const CodeObject = struct {
 };
 
 pub const Instruction = union(enum) {
-    LoadName: LoadName,
-    LoadConst: LoadConst,
+    LoadName: struct {
+        name: []const u8,
+    },
+    LoadConst: struct {
+        value: i32,
+    },
+    LoadStringConst: struct {
+        value: []const u8,
+    },
 
     Pop: void,
     Pass: void,
@@ -81,14 +88,6 @@ pub const Instruction = union(enum) {
     Break: void,
     CallFunction: void,
     ReturnValue: void,
-
-    pub const LoadName = struct {
-        name: []const u8,
-    };
-
-    pub const LoadConst = struct {
-        value: i32,
-    };
 
     pub fn loadConst(value: i32) Instruction {
         return .{ .LoadConst = .{
