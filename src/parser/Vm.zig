@@ -12,16 +12,20 @@ const builtins = @import("builtins.zig");
 
 const log = std.log.scoped(.vm);
 
+call_stack: std.ArrayList(CodeObject),
 stack: std.ArrayList(ScopeObject),
 scope: std.StringHashMap(ScopeObject),
+program_counter: usize,
 
 allocator: Allocator,
 
 pub fn init(alloc: Allocator) !Vm {
     return .{
+        .call_stack = std.ArrayList(CodeObject).init(alloc),
         .stack = std.ArrayList(ScopeObject).init(alloc),
         .scope = std.StringHashMap(ScopeObject).init(alloc),
         .allocator = alloc,
+        .program_counter = 0,
     };
 }
 
@@ -37,18 +41,37 @@ pub fn run(vm: *Vm, object: CodeObject) !void {
         try vm.scope.put(name, .{ .zig_function = ref });
     }
 
-    for (object.instructions.items) |inst| {
-        try vm.exec(inst);
+    const current_frame = object;
+
+    while (true) {
+        if (vm.program_counter >= current_frame.instructions.items.len) break;
+
+        const instruction = current_frame.instructions.items[vm.program_counter];
+        log.debug("Executing Instruction: {} (stacksize={}, pc={}/{})", .{
+            instruction,
+            vm.stack.items.len,
+            vm.program_counter,
+            object.instructions.items.len,
+        });
+        vm.program_counter += 1;
+        try vm.exec(instruction);
     }
 }
 
 fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
-    log.debug("executing {s}", .{@tagName(inst)});
-
     switch (inst) {
         .LoadConst => |load_const| {
-            const obj = ScopeObject.newVal(load_const.value);
-            try vm.stack.append(obj);
+            switch (load_const.value) {
+                .Integer => |int| {
+                    const obj = ScopeObject.newVal(int);
+                    try vm.stack.append(obj);
+                },
+                .String => |string| {
+                    _ = string;
+
+                    @panic("todo");
+                },
+            }
         },
 
         .LoadName => |load_name| {
@@ -61,6 +84,7 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
                 std.debug.panic("loadName {s} not found in the scope", .{load_name.name});
             }
         },
+
         .StoreName => |store_name| {
             const ref = vm.stack.pop();
             try vm.scope.put(store_name.name, ref);
@@ -89,65 +113,22 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             }
         },
 
-        // Math stuff
-        .BinaryAdd => {
-            const lhs = vm.stack.pop();
-            const rhs = vm.stack.pop();
-            if (lhs == .value) {
-                if (rhs == .value) {
-                    const result = lhs.value + rhs.value;
-                    try vm.stack.append(ScopeObject.newVal(result));
-                } else {
-                    @panic("rhs bin add not value");
-                }
-            } else {
-                @panic("lhs bin add not value");
-            }
-        },
+        .BinaryOperation => |bin_op| {
+            const lhs_obj = vm.stack.pop();
+            const rhs_obj = vm.stack.pop();
 
-        .BinarySubtract => {
-            const lhs = vm.stack.pop();
-            const rhs = vm.stack.pop();
-            if (lhs == .value) {
-                if (rhs == .value) {
-                    const result = lhs.value - rhs.value;
-                    try vm.stack.append(ScopeObject.newVal(result));
-                } else {
-                    @panic("rhs bin sub not value");
-                }
-            } else {
-                @panic("lhs bin sub not value");
-            }
-        },
+            const lhs = lhs_obj.value;
+            const rhs = rhs_obj.value;
 
-        .BinaryMultiply => {
-            const lhs = vm.stack.pop();
-            const rhs = vm.stack.pop();
-            if (lhs == .value) {
-                if (rhs == .value) {
-                    const result = lhs.value * rhs.value;
-                    try vm.stack.append(ScopeObject.newVal(result));
-                } else {
-                    @panic("rhs bin mul not value");
-                }
-            } else {
-                @panic("lhs bin mul not value");
-            }
-        },
+            const result = switch (bin_op.op) {
+                .Add => lhs + rhs,
+                .Subtract => lhs - rhs,
+                .Multiply => lhs * rhs,
+                .Divide => @divTrunc(lhs, rhs),
+                else => @panic("TODO: binaryOP"),
+            };
 
-        .BinaryDivide => {
-            const lhs = vm.stack.pop();
-            const rhs = vm.stack.pop();
-            if (lhs == .value) {
-                if (rhs == .value) {
-                    const result = @divTrunc(lhs.value, rhs.value);
-                    try vm.stack.append(ScopeObject.newVal(result));
-                } else {
-                    @panic("rhs bin div not value");
-                }
-            } else {
-                @panic("lhs bin div not value");
-            }
+            try vm.stack.append(ScopeObject.newVal(result));
         },
 
         else => log.warn("TODO: {s}", .{@tagName(inst)}),

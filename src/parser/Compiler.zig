@@ -6,9 +6,10 @@ const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.compiler);
 
 const Compiler = @This();
+const CompilerError = error{OutOfMemory};
 
 code_object: CodeObject,
-next_label: usize,
+next_label: Label,
 
 const Label = usize;
 
@@ -27,7 +28,17 @@ pub fn compile_module(compiler: *Compiler, module: Ast.Root) !void {
     try compiler.compile_statements(module.Module.body);
 }
 
-fn compile_statements(compiler: *Compiler, statements: []Ast.Statement) !void {
+fn newLabel(compiler: *Compiler) Label {
+    const label = compiler.next_label;
+    compiler.next_label += 1;
+    return label;
+}
+
+fn setLabel(compiler: *Compiler, label: Label) !void {
+    try compiler.code_object.labels.append(label);
+}
+
+fn compile_statements(compiler: *Compiler, statements: []Ast.Statement) CompilerError!void {
     for (statements) |statement| {
         try compiler.compile_statement(statement);
     }
@@ -43,7 +54,7 @@ fn compile_statement(compiler: *Compiler, statement: Ast.Statement) !void {
             try compiler.compile_expression(expr);
 
             // We discard the result.
-            try compiler.code_object.emit(.Pop);
+            // try compiler.code_object.emit(.Pop);
         },
 
         .Assign => |assign| {
@@ -60,14 +71,23 @@ fn compile_statement(compiler: *Compiler, statement: Ast.Statement) !void {
             }
         },
 
-        else => std.debug.panic("TODO: {s}", .{@tagName(statement)}),
+        .If => |if_stat| {
+            try compiler.compile_expression(if_stat.case.*);
+            const else_label = compiler.newLabel();
+            const jumpIf = Instruction.jumpIf(else_label);
+            try compiler.code_object.emit(jumpIf);
+            try compiler.compile_statements(if_stat.body);
+            try compiler.setLabel(else_label);
+        },
+
+        else => std.debug.panic("TODO compile_statement: {s}", .{@tagName(statement)}),
     }
 }
 
 fn compile_expression(compiler: *Compiler, expression: Ast.Expression) !void {
     switch (expression) {
         .Number => |number| {
-            const inst = Instruction.loadConst(number.value);
+            const inst = Instruction.loadConst(.{ .Integer = number.value });
             try compiler.code_object.emit(inst);
         },
 
@@ -91,15 +111,24 @@ fn compile_expression(compiler: *Compiler, expression: Ast.Expression) !void {
             try compiler.compile_expression(bin_op.left.*);
             try compiler.compile_expression(bin_op.right.*);
 
-            const inst: Instruction = switch (bin_op.op) {
-                .Add => .BinaryAdd,
-                .Sub => .BinarySubtract,
-                .Mult => .BinaryMultiply,
-                .Div => .BinaryDivide,
-                else => std.debug.panic("TODO OP: {s}", .{@tagName(bin_op.op)}),
+            const op: BinaryOp = switch (bin_op.op) {
+                .Add => .Add,
+                .Mult => .Multiply,
+                .Div => .Divide,
+                .Sub => .Subtract,
+                else => std.debug.panic("TODO BinOp: {s}", .{@tagName(bin_op.op)}),
             };
 
+            const inst = BinaryOp.newBinaryOp(op);
             try compiler.code_object.emit(inst);
+        },
+
+        .True => {
+            try compiler.code_object.emit(Instruction.loadConst(.{ .Integer = 1 }));
+        },
+
+        .False => {
+            try compiler.code_object.emit(Instruction.loadConst(.{ .Integer = 0 }));
         },
 
         else => std.debug.panic("TODO: {s}", .{@tagName(expression)}),
@@ -108,10 +137,12 @@ fn compile_expression(compiler: *Compiler, expression: Ast.Expression) !void {
 
 pub const CodeObject = struct {
     instructions: std.ArrayList(Instruction),
+    labels: std.ArrayList(Label),
 
     pub fn init(allocator: std.mem.Allocator) CodeObject {
         return .{
             .instructions = std.ArrayList(Instruction).init(allocator),
+            .labels = std.ArrayList(Label).init(allocator),
         };
     }
 
@@ -133,33 +164,26 @@ pub const CodeObject = struct {
 };
 
 pub const Instruction = union(enum) {
-    LoadName: struct {
-        name: []const u8,
-    },
-    StoreName: struct {
-        name: []const u8,
-    },
-
-    LoadConst: struct {
-        value: i32,
-    },
-    LoadStringConst: struct {
-        value: []const u8,
-    },
+    LoadName: struct { name: []const u8 },
+    StoreName: struct { name: []const u8 },
+    LoadConst: struct { value: Constant },
 
     Pop: void,
     Pass: void,
     Continue: void,
     Break: void,
+
+    Jump: struct { target: Label },
+    JumpIf: struct { target: Label },
     CallFunction: struct { arg_count: usize },
+
+    BinaryOperation: struct { op: BinaryOp },
+    UnaryOperation: struct { op: UnaryOp },
+
     ReturnValue: void,
+    PushBlock: struct { start: Label, end: Label },
 
-    BinaryAdd: void,
-    BinarySubtract: void,
-    BinaryMultiply: void,
-    BinaryDivide: void,
-
-    pub fn loadConst(value: i32) Instruction {
+    pub fn loadConst(value: Constant) Instruction {
         return .{
             .LoadConst = .{
                 .value = value,
@@ -188,4 +212,57 @@ pub const Instruction = union(enum) {
             },
         };
     }
+
+    pub fn jumpIf(target: Label) Instruction {
+        return .{
+            .JumpIf = .{
+                .target = target,
+            },
+        };
+    }
+
+    pub fn format(
+        self: Instruction,
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        std.debug.assert(fmt.len == 0);
+
+        try writer.print("{s}", .{@tagName(self)});
+    }
+};
+
+pub const Constant = union(enum) {
+    String: []const u8,
+    Integer: i32,
+};
+
+pub const BinaryOp = enum {
+    Power,
+    Multiply,
+    MatrixMultiply,
+    Divide,
+    FloorDivide,
+    Modulo,
+    Add,
+    Subtract,
+    Lshift,
+    Rshift,
+    And,
+    Xor,
+    Or,
+
+    pub fn newBinaryOp(op: BinaryOp) Instruction {
+        return .{
+            .BinaryOperation = .{
+                .op = op,
+            },
+        };
+    }
+};
+
+pub const UnaryOp = enum {
+    Not,
+    Minus,
 };

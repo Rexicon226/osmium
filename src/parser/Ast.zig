@@ -28,6 +28,19 @@ pub const Statement = union(enum) {
         name: []const u8,
         body: []Expression,
     },
+    If: struct {
+        case: *Expression,
+        body: []Statement,
+    },
+
+    pub fn newIf(case: *Expression, body: []Statement) Statement {
+        return .{
+            .If = .{
+                .case = case,
+                .body = body,
+            },
+        };
+    }
 
     pub fn newAssign(targets: []Expression, value: *Expression) Statement {
         return .{
@@ -147,6 +160,20 @@ pub const Expression = union(enum) {
                 .right = rhs,
             },
         };
+
+        return expr;
+    }
+
+    pub fn newBool(
+        b: bool,
+        allocator: Allocator,
+    ) AstError!*Expression {
+        const expr = try allocator.create(Expression);
+
+        expr.* = if (b)
+            .True
+        else
+            .False;
 
         return expr;
     }

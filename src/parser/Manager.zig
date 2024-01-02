@@ -54,8 +54,8 @@ pub fn run_file(manager: *Manager, file_name: []const u8) !void {
     try compiler.compile_module(module);
 
     // // Run the object.
-    // var vm = try Vm.init(manager.allocator);
-    // defer vm.deinit();
+    var vm = try Vm.init(manager.allocator);
+    defer vm.deinit();
 
-    // try vm.run(object);
+    try vm.run(compiler.code_object);
 }

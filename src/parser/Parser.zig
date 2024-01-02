@@ -57,15 +57,36 @@ pub fn parse(parser: *Parser, source: [:0]const u8) !Ast.Root {
     };
 }
 
+pub fn parseStatements(allocator: Allocator, tokens: []const Token) ![]Ast.Statement {
+    var parser = try Parser.init(allocator);
+
+    const parser_tokens = try allocator.alloc(Token, tokens.len + 1);
+    @memcpy(parser_tokens[0..tokens.len], tokens);
+    parser_tokens[tokens.len] = .{ .data = undefined, .kind = .eof };
+    parser.tokens = parser_tokens;
+
+    var statements = std.ArrayList(Ast.Statement).init(parser.allocator);
+
+    parser.index = 0;
+    while (parser.index < parser.tokens.len) {
+        const token = parser.currentToken();
+        if (token.kind == .eof) break;
+
+        try statements.append(try parser.statement(token));
+
+        if (parser.currentToken().kind != .eof) parser.eat(.newline) else break;
+    }
+
+    return try statements.toOwnedSlice();
+}
+
 /// A completely isolated parser that blindly parses a set of tokens into an expression.
 pub fn parseTokens(allocator: Allocator, tokens: []const Token) !*Expression {
     var parser = try Parser.init(allocator);
 
     const parser_tokens = try allocator.alloc(Token, tokens.len + 1);
     @memcpy(parser_tokens[0..tokens.len], tokens);
-
     parser_tokens[tokens.len] = .{ .data = undefined, .kind = .eof };
-
     parser.tokens = parser_tokens;
 
     return try parser.expression(parser_tokens[0]);
@@ -83,6 +104,45 @@ fn statement(parser: *Parser, token: Token) ParserError!Ast.Statement {
 
     const kind = token.kind;
 
+    if (kind == .keyword_if) {
+        parser.eat(.keyword_if);
+        parser.eat(.lparen);
+
+        // First token of the contents.
+        var r_paren_index: u32 = parser.index;
+
+        if (parser.tokens[r_paren_index].kind == .rparen) @panic("if condition is empty");
+
+        // Search for the matching rparen
+        var num_l_parens: u32 = 1;
+        var num_r_parens: u32 = 0;
+        while (num_l_parens != num_r_parens) {
+            r_paren_index += 1;
+            const paren_kind = parser.tokens[r_paren_index].kind;
+            if (paren_kind == .lparen) num_l_parens += 1;
+            if (paren_kind == .rparen) num_r_parens += 1;
+        }
+
+        const arg_slice = parser.tokens[parser.index..r_paren_index];
+        _ = arg_slice;
+        parser.index = r_paren_index;
+        parser.eat(.rparen);
+
+        const condition_expr = try Expression.newBool(true, parser.allocator);
+
+        parser.eat(.colon);
+
+        // TODO: can be not on a new line
+        parser.eat(.newline);
+
+        // Just assume the rest is the if.
+        const statements = try parseStatements(parser.allocator, parser.tokens[parser.index..]);
+
+        parser.index = @intCast(parser.tokens.len - 1);
+
+        return Ast.Statement.newIf(condition_expr, statements);
+    }
+
     if (kind == .identifier) {
         const ident = token.data;
 
@@ -96,7 +156,7 @@ fn statement(parser: *Parser, token: Token) ParserError!Ast.Statement {
 
             var args = std.ArrayList(Expression).init(parser.allocator);
 
-            // Is there any arguments?
+            // Are there any arguments?
             if (parser.tokens[r_paren_index].kind != .rparen) {
 
                 // Search for the matching rparen
