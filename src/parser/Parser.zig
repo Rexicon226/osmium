@@ -81,19 +81,14 @@ fn statement(parser: *Parser, token: Token) ParserError!Ast.Statement {
         else => {},
     }
 
-    return .{ .Expr = (try parser.expression(token)).* };
-}
-
-fn expression(parser: *Parser, token: Token) ParserError!*Expression {
     const kind = token.kind;
 
     if (kind == .identifier) {
         const ident = token.data;
 
-        parser.eat(.identifier);
-
         // Is it a function call
-        if (parser.currentToken().kind == .lparen) {
+        if (parser.nextToken().kind == .lparen) {
+            parser.eat(.identifier);
             parser.eat(.lparen);
 
             // First token of the contents.
@@ -132,12 +127,35 @@ fn expression(parser: *Parser, token: Token) ParserError!*Expression {
 
             const func_ident = try Expression.newIdentifer(ident, parser.allocator);
 
-            return Expression.newCall(func_ident, args.items, parser.allocator);
+            return .{ .Expr = (try Expression.newCall(func_ident, args.items, parser.allocator)).* };
         }
 
-        @panic("ident without lparen not supported");
+        // Is this an assignment
+        if (parser.nextToken().kind == .op_assign) {
+            parser.eat(.identifier);
+
+            // What are the targets. Currently, only support single targets.
+            const targets = try parser.allocator.alloc(Ast.Expression, 1);
+            targets[0] = (try Expression.newIdentifer(
+                ident,
+                parser.allocator,
+            )).*;
+
+            parser.eat(.op_assign);
+
+            // What are we assinging to said target.
+            const payload = try parser.expression(parser.currentToken());
+
+            return Ast.Statement.newAssign(targets, payload);
+        }
+
+        @panic("ident something wrong");
     }
 
+    return .{ .Expr = (try parser.expression(token)).* };
+}
+
+fn expression(parser: *Parser, token: Token) ParserError!*Expression {
     return try parser.add(token);
 }
 
@@ -213,6 +231,16 @@ fn primary(parser: *Parser, token: Token) ParserError!*Expression {
         parser.eat(.number);
         const expr = Expression.newNumber(
             try std.fmt.parseInt(i32, token.data, 10),
+            parser.allocator,
+        );
+        return expr;
+    }
+
+    // Some sort of name
+    if (kind == .identifier) {
+        parser.eat(.identifier);
+        const expr = Expression.newIdentifer(
+            token.data,
             parser.allocator,
         );
         return expr;

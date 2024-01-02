@@ -34,6 +34,20 @@ pub const CodeObject = struct {
                     try object.expression(expr);
                 },
 
+                .Assign => |assign| {
+                    try object.expression(assign.value.*);
+
+                    for (assign.targets) |target| {
+                        switch (target) {
+                            .Identifier => |ident| {
+                                const inst = Instruction.storeName(ident.name);
+                                try object.addInstruction(inst);
+                            },
+                            else => @panic("assinging to non-ident"),
+                        }
+                    }
+                },
+
                 else => std.debug.panic("TODO: {s}", .{@tagName(statement)}),
             }
         }
@@ -67,13 +81,15 @@ pub const CodeObject = struct {
                 try object.expression(bin_op.left.*);
                 try object.expression(bin_op.right.*);
 
-                switch (bin_op.op) {
-                    .Add => try object.addInstruction(.BinaryAdd),
-                    .Sub => try object.addInstruction(.BinarySubtract),
-                    .Mult => try object.addInstruction(.BinaryMultiply),
-                    .Div => try object.addInstruction(.BinaryDivide),
+                const inst: Instruction = switch (bin_op.op) {
+                    .Add => .BinaryAdd,
+                    .Sub => .BinarySubtract,
+                    .Mult => .BinaryMultiply,
+                    .Div => .BinaryDivide,
                     else => std.debug.panic("TODO OP: {s}", .{@tagName(bin_op.op)}),
-                }
+                };
+
+                try object.addInstruction(inst);
             },
 
             else => std.debug.panic("TODO: {s}", .{@tagName(expr)}),
@@ -105,6 +121,10 @@ pub const Instruction = union(enum) {
     LoadName: struct {
         name: []const u8,
     },
+    StoreName: struct {
+        name: []const u8,
+    },
+
     LoadConst: struct {
         value: i32,
     },
@@ -138,6 +158,12 @@ pub const Instruction = union(enum) {
                 .name = name,
             },
         };
+    }
+
+    pub fn storeName(name: []const u8) Instruction {
+        return .{ .StoreName = .{
+            .name = name,
+        } };
     }
 
     pub fn callFunction(arg_count: usize) Instruction {

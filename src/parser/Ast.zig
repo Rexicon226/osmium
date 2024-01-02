@@ -29,6 +29,15 @@ pub const Statement = union(enum) {
         body: []Expression,
     },
 
+    pub fn newAssign(targets: []Expression, value: *Expression) Statement {
+        return .{
+            .Assign = .{
+                .targets = targets,
+                .value = value,
+            },
+        };
+    }
+
     pub fn format(
         self: Statement,
         comptime fmt: []const u8,

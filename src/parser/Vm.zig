@@ -50,6 +50,7 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             const obj = ScopeObject.newVal(load_const.value);
             try vm.stack.append(obj);
         },
+
         .LoadName => |load_name| {
             // Find the name in the scope, and add it to the stack.
             const scope_ref = vm.scope.get(load_name.name);
@@ -59,6 +60,10 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             } else {
                 std.debug.panic("loadName {s} not found in the scope", .{load_name.name});
             }
+        },
+        .StoreName => |store_name| {
+            const ref = vm.stack.pop();
+            try vm.scope.put(store_name.name, ref);
         },
 
         .Pop => _ = vm.stack.pop(),
