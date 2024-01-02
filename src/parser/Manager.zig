@@ -7,7 +7,7 @@ const Manager = @This();
 
 const Tokenizer = @import("Tokenizer.zig");
 const Parser = @import("Parser.zig");
-const bytecode = @import("bytecode.zig");
+const Compiler = @import("Compiler.zig");
 const Vm = @import("Vm.zig");
 
 const log = std.log.scoped(.parser);
@@ -47,17 +47,15 @@ pub fn run_file(manager: *Manager, file_name: []const u8) !void {
         log.debug("{}", .{stat});
     }
 
-    // Compile to bytecode
-    var object = bytecode.CodeObject.init(manager.allocator);
-    defer object.deinit();
+    // Compile the bytecode
+    var compiler = Compiler.init(manager.allocator);
+    defer compiler.deinit();
 
-    try object.translate(module);
+    try compiler.compile_module(module);
 
-    try object.dump();
+    // // Run the object.
+    // var vm = try Vm.init(manager.allocator);
+    // defer vm.deinit();
 
-    // Run the bytecode.
-    var vm = try Vm.init(manager.allocator);
-    defer vm.deinit();
-
-    try vm.run(object);
+    // try vm.run(object);
 }

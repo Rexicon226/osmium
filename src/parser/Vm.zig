@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 
 const Vm = @This();
 
-const bytecode = @import("bytecode.zig");
+const bytecode = @import("Compiler.zig");
 const CodeObject = bytecode.CodeObject;
 
 const builtins = @import("builtins.zig");
