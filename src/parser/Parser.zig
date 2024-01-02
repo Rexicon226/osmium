@@ -124,20 +124,19 @@ fn statement(parser: *Parser, token: Token) ParserError!Ast.Statement {
         }
 
         const arg_slice = parser.tokens[parser.index..r_paren_index];
-        _ = arg_slice;
         parser.index = r_paren_index;
         parser.eat(.rparen);
 
-        const condition_expr = try Expression.newBool(true, parser.allocator);
+        const condition_expr = try parseTokens(parser.allocator, arg_slice);
+        if (condition_expr.* != .Compare) @panic("if condition is not a compare");
 
         parser.eat(.colon);
 
         // TODO: can be not on a new line
         parser.eat(.newline);
 
-        // Just assume the rest is the if.
+        // Just assume the rest of the file is the if.
         const statements = try parseStatements(parser.allocator, parser.tokens[parser.index..]);
-
         parser.index = @intCast(parser.tokens.len - 1);
 
         return Ast.Statement.newIf(condition_expr, statements);
