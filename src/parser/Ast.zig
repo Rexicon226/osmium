@@ -76,6 +76,11 @@ pub const Expression = union(enum) {
         op: Op,
         right: *Expression,
     },
+    Compare: struct {
+        left: *Expression,
+        op: CompareOp,
+        right: *Expression,
+    },
     UnaryOp: struct {
         op: UnaryOp,
         operand: *Expression,
@@ -164,6 +169,25 @@ pub const Expression = union(enum) {
         return expr;
     }
 
+    pub fn newCompare(
+        lhs: *Expression,
+        op: CompareOp,
+        rhs: *Expression,
+        allocator: Allocator,
+    ) AstError!*Expression {
+        const expr = try allocator.create(Expression);
+
+        expr.* = .{
+            .Compare = .{
+                .left = lhs,
+                .op = op,
+                .right = rhs,
+            },
+        };
+
+        return expr;
+    }
+
     pub fn newBool(
         b: bool,
         allocator: Allocator,
@@ -221,4 +245,14 @@ pub const Op = enum {
     BitXor,
     BitAnd,
     FloorDiv,
+};
+
+/// These compare ops and allow for boolean logic.
+pub const CompareOp = enum {
+    Eq, // ==
+    NotEq, // !=
+    Lt, // <
+    LtE, // <=
+    Gt, // >
+    GtE, // >=
 };

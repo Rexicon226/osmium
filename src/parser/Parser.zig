@@ -216,7 +216,90 @@ fn statement(parser: *Parser, token: Token) ParserError!Ast.Statement {
 }
 
 fn expression(parser: *Parser, token: Token) ParserError!*Expression {
+    return try parser.equality(token);
+}
+
+fn equality(parser: *Parser, token: Token) ParserError!*Expression {
+    var expr = try parser.relational(token);
+
+    while (true) {
+        if (parser.currentToken().kind == .op_equal) {
+            parser.eat(.op_equal);
+            expr = try Expression.newCompare(
+                expr,
+                .Eq,
+                try parser.relational(parser.currentToken()),
+                parser.allocator,
+            );
+            continue;
+        }
+
+        // TODO
+        // if (parser.currentToken().kind == .op_neq) {
+        //     parser.eat(.op_neq);
+        //     expr = try Expression.newCompare(
+        //         expr,
+        //         .NotEq,
+        //         try parser.relational(parser.currentToken()),
+        //         parser.allocator,
+        //     );
+        //     continue;
+        // }
+
+        return expr;
+    }
+}
+
+fn relational(parser: *Parser, token: Token) ParserError!*Expression {
     return try parser.add(token);
+
+    // while (true) {
+    //     if (parser.currentToken().kind == .op_lt) {
+    //         parser.eat(.op_lt);
+    //         expr = try Expression.newCompare(
+    //             expr,
+    //             .Lt,
+    //             try parser.add(parser.currentToken()),
+    //             parser.allocator,
+    //         );
+    //         continue;
+    //     }
+
+    //     if (parser.currentToken().kind == .op_gt) {
+    //         parser.eat(.op_gt);
+    //         expr = try Expression.newCompare(
+    //             expr,
+    //             .Gt,
+    //             try parser.add(parser.currentToken()),
+    //             parser.allocator,
+    //         );
+    //         continue;
+    //     }
+
+    //     if (parser.currentToken().kind == .op_lte) {
+    //         parser.eat(.op_lte);
+    //         expr = try Expression.newCompare(
+    //             expr,
+    //             .LtE,
+    //             try parser.add(parser.currentToken()),
+    //             parser.allocator,
+    //         );
+    //         continue;
+    //     }
+
+    //     if (parser.currentToken().kind == .op_gte) {
+    //         parser.eat(.op_gte);
+    //         expr = try Expression.newCompare(
+    //             expr,
+    //             .GtE,
+    //             try parser.add(parser.currentToken()),
+    //             parser.allocator,
+    //         );
+    //         continue;
+    //     }
+
+    //     return expr;
+    // }
 }
 
 fn add(parser: *Parser, token: Token) ParserError!*Expression {

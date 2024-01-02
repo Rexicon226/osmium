@@ -58,6 +58,11 @@ pub fn run(vm: *Vm, object: CodeObject) !void {
     }
 }
 
+/// Jump to a label in the current frame.
+fn jump(vm: *Vm, target: Label) void {
+    vm.program_counter = target;
+}
+
 fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
     switch (inst) {
         .LoadConst => |load_const| {
@@ -131,19 +136,60 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             try vm.stack.append(ScopeObject.newVal(result));
         },
 
+        .CompareOperation => |comp_op| {
+            const lhs_obj = vm.stack.pop();
+            const rhs_obj = vm.stack.pop();
+
+            const lhs = lhs_obj.value;
+            const rhs = rhs_obj.value;
+
+            const result = switch (comp_op.op) {
+                .Equal => lhs == rhs,
+                .NotEqual => lhs != rhs,
+                .Less => lhs < rhs,
+                .LessEqual => lhs <= rhs,
+                .Greater => lhs > rhs,
+                .GreaterEqual => lhs >= rhs,
+            };
+
+            try vm.stack.append(ScopeObject.newBoolean(result));
+        },
+
+        .JumpIf => |jump_if| {
+            // Just true for now.
+            if (true) {
+                vm.jump(jump_if.target);
+            }
+        },
+
         else => log.warn("TODO: {s}", .{@tagName(inst)}),
     }
 }
 
+const Label = usize;
+
 pub const ScopeObject = union(enum) {
     value: i32,
     string: []const u8,
+    boolean: bool,
 
     zig_function: *const fn ([]ScopeObject) void,
 
     pub fn newVal(value: i32) ScopeObject {
         return .{
             .value = value,
+        };
+    }
+
+    pub fn newString(string: []const u8) ScopeObject {
+        return .{
+            .string = string,
+        };
+    }
+
+    pub fn newBoolean(boolean: bool) ScopeObject {
+        return .{
+            .boolean = boolean,
         };
     }
 
@@ -158,6 +204,7 @@ pub const ScopeObject = union(enum) {
         switch (self) {
             .value => |val| try writer.print("{}", .{val}),
             .string => |string| try writer.print("{s}", .{string}),
+            .boolean => |boolean| try writer.print("{}", .{boolean}),
             .zig_function => @panic("cannot print function ScopeObject"),
         }
     }

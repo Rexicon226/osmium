@@ -123,6 +123,23 @@ fn compile_expression(compiler: *Compiler, expression: Ast.Expression) !void {
             try compiler.code_object.emit(inst);
         },
 
+        .Compare => |compare| {
+            try compiler.compile_expression(compare.left.*);
+            try compiler.compile_expression(compare.right.*);
+
+            const op: CompareOp = switch (compare.op) {
+                .Eq => .Equal,
+                .NotEq => .NotEqual,
+                .Lt => .Less,
+                .LtE => .LessEqual,
+                .Gt => .Greater,
+                .GtE => .GreaterEqual,
+            };
+
+            const inst = CompareOp.newCompareOp(op);
+            try compiler.code_object.emit(inst);
+        },
+
         .True => {
             try compiler.code_object.emit(Instruction.loadConst(.{ .Integer = 1 }));
         },
@@ -179,6 +196,7 @@ pub const Instruction = union(enum) {
 
     BinaryOperation: struct { op: BinaryOp },
     UnaryOperation: struct { op: UnaryOp },
+    CompareOperation: struct { op: CompareOp },
 
     ReturnValue: void,
     PushBlock: struct { start: Label, end: Label },
@@ -265,4 +283,21 @@ pub const BinaryOp = enum {
 pub const UnaryOp = enum {
     Not,
     Minus,
+};
+
+pub const CompareOp = enum {
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+
+    pub fn newCompareOp(op: CompareOp) Instruction {
+        return .{
+            .CompareOperation = .{
+                .op = op,
+            },
+        };
+    }
 };
