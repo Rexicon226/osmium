@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const Manager = @import("parser/Manager.zig");
 
@@ -10,25 +11,18 @@ const arena_allocator = arena.allocator();
 
 const log = std.log.scoped(.main);
 
+const version = "0.1.0";
+
 const ArgFlags = struct {
     file_path: ?[]const u8 = null,
 };
 
-fn usage() void {
-    const stdout = std.io.getStdOut().writer();
-
-    const usage_string =
-        \\ 
-        \\Usage:
-        \\ osmium <file> [options]
-        \\
-        \\ Options:
-        \\  --help, -h    Print this message
-    ;
-    stdout.print(usage_string, .{}) catch |err| {
-        std.debug.panic("Failed to print usage: {}\n", .{err});
+pub const std_options = struct {
+    pub const log_level: std.log.Level = switch (builtin.mode) {
+        .Debug => .debug,
+        else => .info,
     };
-}
+};
 
 pub fn main() !u8 {
     defer {
@@ -51,6 +45,11 @@ pub fn main() !u8 {
     for (args) |arg| {
         if ((isEqual(arg, "--help")) or isEqual(arg, "-h")) {
             usage();
+            return 0;
+        }
+
+        if ((isEqual(arg, "--version")) or isEqual(arg, "-v")) {
+            versionPrint();
             return 0;
         }
 
@@ -77,6 +76,32 @@ pub fn main() !u8 {
     log.err("expected a file!", .{});
     usage();
     return 1;
+}
+
+fn usage() void {
+    const stdout = std.io.getStdOut().writer();
+
+    const usage_string =
+        \\ 
+        \\Usage:
+        \\ osmium <file> [options]
+        \\
+        \\ Options:
+        \\  --help, -h    Print this message
+        \\  --version, -v Print the version
+    ;
+
+    stdout.print(usage_string, .{}) catch |err| {
+        std.debug.panic("Failed to print usage: {}\n", .{err});
+    };
+}
+
+fn versionPrint() void {
+    const stdout = std.io.getStdOut().writer();
+
+    stdout.print("Osmium {s}, created by David Rubin", .{version}) catch |err| {
+        std.debug.panic("Failed to print version: {}\n", .{err});
+    };
 }
 
 fn isEqual(a: []const u8, b: []const u8) bool {

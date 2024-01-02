@@ -40,9 +40,14 @@ pub fn parse(parser: *Parser, source: [:0]const u8) !Ast.Root {
 
     var statements = std.ArrayList(Ast.Statement).init(parser.allocator);
 
-    while (parser.index < parser.tokens.len) : (parser.index += 1) {
-        const token = parser.nextToken();
+    parser.index = 0;
+    while (parser.index < parser.tokens.len) {
+        const token = parser.currentToken();
+        if (token.kind == .eof) break;
+
         try statements.append(try parser.statement(token));
+
+        if (parser.currentToken().kind != .eof) parser.eat(.newline) else break;
     }
 
     return .{
@@ -85,41 +90,44 @@ fn expression(parser: *Parser, token: Token) ParserError!*Expression {
     if (kind == .identifier) {
         const ident = token.data;
 
-        parser.skip(.identifier);
+        parser.eat(.identifier);
 
         // Is it a function call
-        if (parser.tokens[parser.index].kind == .lparen) {
-            parser.skip(.lparen);
+        if (parser.currentToken().kind == .lparen) {
+            parser.eat(.lparen);
 
+            // First token of the contents.
             var r_paren_index: u32 = parser.index;
 
-            var num_l_parens: u32 = 1;
-            var num_r_parens: u32 = 0;
-            while (num_l_parens != num_r_parens) : (r_paren_index += 1) {
-                if (parser.tokens[r_paren_index].kind == .lparen) {
-                    num_l_parens += 1;
-                } else if (parser.tokens[r_paren_index].kind == .rparen) {
-                    num_r_parens += 1;
-                }
-
-                if (r_paren_index == parser.tokens.len - 1) {
-                    @panic("expected r paren");
-                }
-            }
-
-            const arg_slice = parser.tokens[parser.index..r_paren_index];
-            parser.index += r_paren_index;
-
-            var args_iter = std_extras.mem.tokenizeScalar(
-                Token,
-                arg_slice,
-                .{ .data = ",", .kind = .comma },
-                Token.eql,
-            );
             var args = std.ArrayList(Expression).init(parser.allocator);
 
-            while (args_iter.next()) |arg| {
-                try args.append((try parseTokens(parser.allocator, arg)).*);
+            // Is there any arguments?
+            if (parser.tokens[r_paren_index].kind != .rparen) {
+
+                // Search for the matching rparen
+                var num_l_parens: u32 = 1;
+                var num_r_parens: u32 = 0;
+                while (num_l_parens != num_r_parens) {
+                    r_paren_index += 1;
+                    const paren_kind = parser.tokens[r_paren_index].kind;
+                    if (paren_kind == .lparen) num_l_parens += 1;
+                    if (paren_kind == .rparen) num_r_parens += 1;
+                }
+
+                const arg_slice = parser.tokens[parser.index..r_paren_index];
+                parser.index = r_paren_index;
+                parser.eat(.rparen);
+
+                var args_iter = std_extras.mem.tokenizeScalar(
+                    Token,
+                    arg_slice,
+                    .{ .data = ",", .kind = .comma },
+                    Token.eql,
+                );
+
+                while (args_iter.next()) |arg| {
+                    try args.append((try parseTokens(parser.allocator, arg)).*);
+                }
             }
 
             const func_ident = try Expression.newIdentifer(ident, parser.allocator);
@@ -137,12 +145,23 @@ fn add(parser: *Parser, token: Token) ParserError!*Expression {
     var expr = try parser.mul(token);
 
     while (true) {
-        if (parser.nextToken().kind == .op_plus) {
-            parser.skip(.op_plus);
+        if (parser.currentToken().kind == .op_plus) {
+            parser.eat(.op_plus);
             expr = try Expression.newBinOp(
                 expr,
                 .Add,
-                try parser.mul(parser.nextToken()),
+                try parser.mul(parser.currentToken()),
+                parser.allocator,
+            );
+            continue;
+        }
+
+        if (parser.currentToken().kind == .op_minus) {
+            parser.eat(.op_minus);
+            expr = try Expression.newBinOp(
+                expr,
+                .Sub,
+                try parser.mul(parser.currentToken()),
                 parser.allocator,
             );
             continue;
@@ -150,34 +169,52 @@ fn add(parser: *Parser, token: Token) ParserError!*Expression {
 
         return expr;
     }
-
-    unreachable;
 }
 
 fn mul(parser: *Parser, token: Token) ParserError!*Expression {
-    const expr = try parser.primary(token);
+    var expr = try parser.primary(token);
 
-    // TODO multiplication
+    while (true) {
+        if (parser.currentToken().kind == .op_multiply) {
+            parser.eat(.op_multiply);
+            expr = try Expression.newBinOp(
+                expr,
+                .Mult,
+                try parser.primary(parser.currentToken()),
+                parser.allocator,
+            );
+        }
 
-    return expr;
+        if (parser.currentToken().kind == .op_divide) {
+            parser.eat(.op_divide);
+            expr = try Expression.newBinOp(
+                expr,
+                .Div,
+                try parser.primary(parser.currentToken()),
+                parser.allocator,
+            );
+        }
+
+        return expr;
+    }
 }
 
 fn primary(parser: *Parser, token: Token) ParserError!*Expression {
     const kind = token.kind;
 
     if (kind == .lparen) {
-        parser.skip(.lparen);
-        const expr = try parser.expression(parser.nextToken());
-        parser.skip(.rparen);
+        parser.eat(.lparen);
+        const expr = try parser.expression(parser.currentToken());
+        parser.eat(.rparen);
         return expr;
     }
 
     if (kind == .number) {
+        parser.eat(.number);
         const expr = Expression.newNumber(
             try std.fmt.parseInt(i32, token.data, 10),
             parser.allocator,
         );
-        parser.skip(.number);
         return expr;
     }
 
@@ -185,9 +222,17 @@ fn primary(parser: *Parser, token: Token) ParserError!*Expression {
     unreachable;
 }
 
-/// Verifys the next token is kind, and moves forwards one.
-fn skip(parser: *Parser, kind: Tokenizer.Kind) void {
-    if (parser.nextToken().kind != kind) {
+/// Verifies the current token is kind, and moves forwards one.
+///
+/// example:
+///```
+/// currentToken().kind == .number;
+/// nextToken().kind == .eof;
+/// eat(.number);
+/// currentToken().kind == .eof;
+/// ```
+fn eat(parser: *Parser, kind: Tokenizer.Kind) void {
+    if (parser.currentToken().kind != kind) {
         std.debug.panic("invalid token eaten, found: {}", .{parser.nextToken().kind});
     }
     parser.index += 1;
@@ -196,15 +241,14 @@ fn skip(parser: *Parser, kind: Tokenizer.Kind) void {
     }
 }
 
-/// Skips a space if there is one. If not, just does nothing.
-fn skipMaybeSpace(parser: *Parser) void {
-    if (parser.nextToken().kind == .space) {
-        parser.skip(.space);
-    }
+/// Does not advanced, merely peaks
+fn currentToken(parser: *Parser) Token {
+    return parser.tokens[parser.index];
 }
 
+/// Does not advanced, merely peaks
 fn nextToken(parser: *Parser) Token {
-    return parser.tokens[parser.index];
+    return parser.tokens[parser.index + 1];
 }
 
 fn printCurrent(parser: *Parser) void {

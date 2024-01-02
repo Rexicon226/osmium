@@ -62,6 +62,10 @@ pub const Kind = enum {
 
     // Operators
     op_plus,
+    op_minus,
+    op_multiply,
+    op_divide,
+
     op_increment,
     op_plus_equal,
     op_equal,
@@ -439,9 +443,54 @@ fn operator(self: *Tokenizer) !TokenIndex {
         const token = Token{ .kind = Kind.op_plus, .data = data };
         try self.tokens.append(self.allocator, token);
         return self.lastToken();
-    } else {
-        return error.UnexpectedToken;
     }
+
+    if (self.source[start] == '-') {
+        self.advance();
+        if (self.checkEOF()) {
+            const data = self.source[start..self.offset];
+            const token = Token{ .kind = Kind.op_minus, .data = data };
+            try self.tokens.append(self.allocator, token);
+            return self.lastToken();
+        }
+
+        const data = self.source[start..self.offset];
+        const token = Token{ .kind = Kind.op_minus, .data = data };
+        try self.tokens.append(self.allocator, token);
+        return self.lastToken();
+    }
+
+    if (self.source[start] == '*') {
+        self.advance();
+        if (self.checkEOF()) {
+            const data = self.source[start..self.offset];
+            const token = Token{ .kind = Kind.op_multiply, .data = data };
+            try self.tokens.append(self.allocator, token);
+            return self.lastToken();
+        }
+
+        const data = self.source[start..self.offset];
+        const token = Token{ .kind = Kind.op_multiply, .data = data };
+        try self.tokens.append(self.allocator, token);
+        return self.lastToken();
+    }
+
+    if (self.source[start] == '/') {
+        self.advance();
+        if (self.checkEOF()) {
+            const data = self.source[start..self.offset];
+            const token = Token{ .kind = Kind.op_divide, .data = data };
+            try self.tokens.append(self.allocator, token);
+            return self.lastToken();
+        }
+
+        const data = self.source[start..self.offset];
+        const token = Token{ .kind = Kind.op_divide, .data = data };
+        try self.tokens.append(self.allocator, token);
+        return self.lastToken();
+    }
+
+    return error.UnexpectedToken;
 }
 
 fn symbol(self: *Tokenizer) !TokenIndex {

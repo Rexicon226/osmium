@@ -32,10 +32,9 @@ pub const CodeObject = struct {
 
                 .Expr => |expr| {
                     try object.expression(expr);
-
-                    // I am 90% sure this is needed, but I need to figure out why.
-                    // try object.addInstruction(.Pop);
                 },
+
+                else => std.debug.panic("TODO: {s}", .{@tagName(statement)}),
             }
         }
     }
@@ -71,6 +70,8 @@ pub const CodeObject = struct {
                 switch (bin_op.op) {
                     .Add => try object.addInstruction(.BinaryAdd),
                     .Sub => try object.addInstruction(.BinarySubtract),
+                    .Mult => try object.addInstruction(.BinaryMultiply),
+                    .Div => try object.addInstruction(.BinaryDivide),
                     else => std.debug.panic("TODO OP: {s}", .{@tagName(bin_op.op)}),
                 }
             },
@@ -120,6 +121,8 @@ pub const Instruction = union(enum) {
 
     BinaryAdd: void,
     BinarySubtract: void,
+    BinaryMultiply: void,
+    BinaryDivide: void,
 
     pub fn loadConst(value: i32) Instruction {
         return .{

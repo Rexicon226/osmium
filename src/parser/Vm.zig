@@ -100,6 +100,51 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             }
         },
 
+        .BinarySubtract => {
+            const lhs = vm.stack.pop();
+            const rhs = vm.stack.pop();
+            if (lhs == .value) {
+                if (rhs == .value) {
+                    const result = lhs.value - rhs.value;
+                    try vm.stack.append(ScopeObject.newVal(result));
+                } else {
+                    @panic("rhs bin sub not value");
+                }
+            } else {
+                @panic("lhs bin sub not value");
+            }
+        },
+
+        .BinaryMultiply => {
+            const lhs = vm.stack.pop();
+            const rhs = vm.stack.pop();
+            if (lhs == .value) {
+                if (rhs == .value) {
+                    const result = lhs.value * rhs.value;
+                    try vm.stack.append(ScopeObject.newVal(result));
+                } else {
+                    @panic("rhs bin mul not value");
+                }
+            } else {
+                @panic("lhs bin mul not value");
+            }
+        },
+
+        .BinaryDivide => {
+            const lhs = vm.stack.pop();
+            const rhs = vm.stack.pop();
+            if (lhs == .value) {
+                if (rhs == .value) {
+                    const result = @divTrunc(lhs.value, rhs.value);
+                    try vm.stack.append(ScopeObject.newVal(result));
+                } else {
+                    @panic("rhs bin div not value");
+                }
+            } else {
+                @panic("lhs bin div not value");
+            }
+        },
+
         else => log.warn("TODO: {s}", .{@tagName(inst)}),
     }
 }

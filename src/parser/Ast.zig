@@ -17,6 +17,17 @@ pub const Statement = union(enum) {
     Continue: void,
     Pass: void,
     Expr: Expression,
+    Assign: struct {
+        targets: []Expression,
+        value: *Expression,
+    },
+    Return: struct {
+        value: ?*Expression,
+    },
+    FunctionDef: struct {
+        name: []const u8,
+        body: []Expression,
+    },
 
     pub fn format(
         self: Statement,
@@ -30,7 +41,9 @@ pub const Statement = union(enum) {
             .Break => try writer.print("BREAK", .{}),
             .Continue => try writer.print("CONTINUE", .{}),
             .Pass => try writer.print("PASS", .{}),
+            .Assign => |assign| try writer.print("Assign: {}", .{assign.value}),
             .Expr => |expr| try writer.print("{}", .{expr}),
+            else => try writer.print("TODO: format {s}", .{@tagName(self)}),
         }
     }
 };
@@ -58,6 +71,10 @@ pub const Expression = union(enum) {
     Identifier: struct {
         name: []const u8,
     },
+
+    True: void,
+    False: void,
+    None: void,
 
     pub fn newCall(
         func: *Expression,
@@ -139,7 +156,9 @@ pub const Expression = union(enum) {
                 bin_op.op,
                 bin_op.right,
             }),
-            .Number => |num| try writer.print("{}", .{num.value}),
+            .Number => |num| try writer.print("Number: {}", .{num.value}),
+            .Call => |call| try writer.print("Call: {{{}, Arg Count: {}}}", .{ call.func, call.args.len }),
+            .Identifier => |ident| try writer.print("Name: {s}", .{ident.name}),
             else => try writer.print("TODO: format {s}", .{@tagName(self)}),
         }
     }
