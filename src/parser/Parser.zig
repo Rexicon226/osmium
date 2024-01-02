@@ -92,7 +92,16 @@ fn expression(parser: *Parser, token: Token) ParserError!*Expression {
             parser.skip(.lparen);
 
             var r_paren_index: u32 = parser.index;
-            while (parser.tokens[r_paren_index].kind != .rparen) : (r_paren_index += 1) {
+
+            var num_l_parens: u32 = 1;
+            var num_r_parens: u32 = 0;
+            while (num_l_parens != num_r_parens) : (r_paren_index += 1) {
+                if (parser.tokens[r_paren_index].kind == .lparen) {
+                    num_l_parens += 1;
+                } else if (parser.tokens[r_paren_index].kind == .rparen) {
+                    num_r_parens += 1;
+                }
+
                 if (r_paren_index == parser.tokens.len - 1) {
                     @panic("expected r paren");
                 }
