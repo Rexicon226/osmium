@@ -5,10 +5,11 @@ const Allocator = std.mem.Allocator;
 
 const Manager = @This();
 
-const Tokenizer = @import("Tokenizer.zig");
-const Parser = @import("Parser.zig");
-const Compiler = @import("Compiler.zig");
-const Vm = @import("Vm.zig");
+const Tokenizer = @import("frontend/tokenizer/Tokenizer.zig");
+const Parser = @import("frontend/Parser.zig");
+const Compiler = @import("frontend/Compiler.zig");
+const Converter = @import("vm/pyc2byte.zig");
+const Vm = @import("vm/Vm.zig");
 
 const log = std.log.scoped(.parser);
 
@@ -21,6 +22,31 @@ pub fn init(allocator: Allocator) !Manager {
 }
 
 pub fn deinit(_: *Manager) void {}
+
+pub fn run_pyc(manager: *Manager, file_name: []const u8) !void {
+    // Open source file.
+    const source_file = try std.fs.cwd().openFile(file_name, .{});
+
+    const source_file_size = (try source_file.stat()).size;
+
+    const source = try source_file.readToEndAllocOptions(
+        manager.allocator,
+        source_file_size,
+        source_file_size,
+        @alignOf(u8),
+        0,
+    );
+
+    log.debug("Contents:\n{x}", .{source});
+
+    const converter = Converter.init(manager.allocator, source);
+    const object = converter.convert();
+
+    var vm = try Vm.init(manager.allocator);
+    defer vm.deinit();
+
+    try vm.run(object);
+}
 
 pub fn run_file(manager: *Manager, file_name: []const u8) !void {
     // Open source file.
@@ -41,7 +67,7 @@ pub fn run_file(manager: *Manager, file_name: []const u8) !void {
     var parser = try Parser.init(manager.allocator);
     defer parser.deinit();
 
-    const module = try parser.parse(source);
+    const module = try parser.parseFile(source);
 
     for (module.Module.body) |stat| {
         log.debug("{}", .{stat});

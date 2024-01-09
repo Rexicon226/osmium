@@ -1,8 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const Manager = @import("parser/Manager.zig");
-
+const Manager = @import("Manager.zig");
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const gpa_allocator = gpa.allocator();
 
@@ -15,6 +14,7 @@ const version = "0.1.0";
 
 const ArgFlags = struct {
     file_path: ?[]const u8 = null,
+    is_pyc: bool = false,
 };
 
 pub const std_options = struct {
@@ -26,7 +26,7 @@ pub const std_options = struct {
 
 pub fn main() !u8 {
     defer {
-        log.debug("memory usage: {}", .{arena.state.end_index});
+        log.debug("memory usage: {}", .{ arena.state.end_index });
 
         arena.deinit();
         _ = gpa.deinit();
@@ -62,14 +62,24 @@ pub fn main() !u8 {
 
             options.file_path = arg;
         }
+
+        if (std.mem.endsWith(u8, arg, ".pyc")) {
+            if (options.file_path) |_| {
+                usage();
+                return 0;
+            }
+
+            options.file_path = arg;
+            options.is_pyc = true;
+        }
     }
 
     if (options.file_path) |file_path| {
         var manager = try Manager.init(arena_allocator);
         defer manager.deinit();
 
-        try manager.run_file(file_path);
-
+        if (options.is_pyc) try manager.run_pyc(file_path) else  try manager.run_file(file_path);
+       
         return 0;
     }
 
@@ -84,7 +94,7 @@ fn usage() void {
     const usage_string =
         \\ 
         \\Usage:
-        \\ osmium <file> [options]
+        \\ osmium <file>.py/pyc [options]
         \\
         \\ Options:
         \\  --help, -h    Print this message

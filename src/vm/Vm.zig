@@ -5,10 +5,10 @@ const Allocator = std.mem.Allocator;
 
 const Vm = @This();
 
-const bytecode = @import("Compiler.zig");
+const bytecode = @import("../frontend/Compiler.zig");
 const CodeObject = bytecode.CodeObject;
 
-const builtins = @import("builtins.zig");
+const builtins = @import("../builtins.zig");
 
 const log = std.log.scoped(.vm);
 
@@ -99,7 +99,6 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
         .ReturnValue => _ = vm.stack.pop(),
 
         .CallFunction => |call_function| {
-            // TODO(Sinon): Add ability to have more than one arg
             var args = try vm.allocator.alloc(ScopeObject, call_function.arg_count);
 
             for (0..args.len) |i| {
@@ -153,13 +152,6 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             };
 
             try vm.stack.append(ScopeObject.newBoolean(result));
-        },
-
-        .JumpIf => |jump_if| {
-            // Just true for now.
-            if (true) {
-                vm.jump(jump_if.target);
-            }
         },
 
         else => log.warn("TODO: {s}", .{@tagName(inst)}),

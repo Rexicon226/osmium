@@ -83,7 +83,7 @@ pub const Kind = enum {
     at,
 
     // Extra
-    eof,
+    endmarker,
 };
 
 /// A token aka slice of data inside the source.
@@ -199,7 +199,7 @@ pub fn parse(tokenizer: *Tokenizer) ![]Token {
         try tokens.append(token);
     }
 
-    try tokens.append(.{ .data = undefined, .kind = .eof });
+    try tokens.append(.{ .data = undefined, .kind = .endmarker });
 
     for (tokens.items) |token| {
         log.debug("Token: {}", .{token.kind});

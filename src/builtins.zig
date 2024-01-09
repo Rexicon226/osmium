@@ -1,7 +1,7 @@
 // Scope References to builtin functions
 
 const std = @import("std");
-const vm = @import("Vm.zig");
+const vm = @import("vm/Vm.zig");
 
 pub const builtin_fns = &.{
     .{ "print", print },

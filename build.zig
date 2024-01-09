@@ -13,10 +13,10 @@ pub fn build(b: *std.Build) void {
 
     // Deps
     const std_extras = b.addModule("std-extras", .{
-        .source_file = .{ .path = "src/std-extra/std.zig" },
+        .root_source_file = .{ .path = "src/std-extra/std.zig" },
     });
 
-    exe.addModule("std-extras", std_extras);
+    exe.root_module.addImport("std-extras", std_extras);
 
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);

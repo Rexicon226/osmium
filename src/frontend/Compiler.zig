@@ -28,16 +28,6 @@ pub fn compile_module(compiler: *Compiler, module: Ast.Root) !void {
     try compiler.compile_statements(module.Module.body);
 }
 
-fn newLabel(compiler: *Compiler) Label {
-    const label = compiler.next_label;
-    compiler.next_label += 1;
-    return label;
-}
-
-fn setLabel(compiler: *Compiler, label: Label) !void {
-    try compiler.code_object.labels.append(label);
-}
-
 fn compile_statements(compiler: *Compiler, statements: []Ast.Statement) CompilerError!void {
     for (statements) |statement| {
         try compiler.compile_statement(statement);
@@ -69,15 +59,6 @@ fn compile_statement(compiler: *Compiler, statement: Ast.Statement) !void {
                     else => @panic("assinging to non-ident"),
                 }
             }
-        },
-
-        .If => |if_stat| {
-            try compiler.compile_expression(if_stat.case.*);
-            const else_label = compiler.newLabel();
-            const jumpIf = Instruction.jumpIf(else_label);
-            try compiler.code_object.emit(jumpIf);
-            try compiler.compile_statements(if_stat.body);
-            try compiler.setLabel(else_label);
         },
 
         else => std.debug.panic("TODO compile_statement: {s}", .{@tagName(statement)}),
@@ -154,12 +135,10 @@ fn compile_expression(compiler: *Compiler, expression: Ast.Expression) !void {
 
 pub const CodeObject = struct {
     instructions: std.ArrayList(Instruction),
-    labels: std.ArrayList(Label),
 
     pub fn init(allocator: std.mem.Allocator) CodeObject {
         return .{
             .instructions = std.ArrayList(Instruction).init(allocator),
-            .labels = std.ArrayList(Label).init(allocator),
         };
     }
 
