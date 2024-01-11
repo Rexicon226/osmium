@@ -1,5 +1,10 @@
 const std = @import("std");
-pub const Hello = std.AutoHashMap(u32, void);
-test "test" {
-    std.testing.refAllDeclsRecursive(@This());
+
+const Union = union(enum) {
+    Foo: u8,
+    Bar: f64,
+};
+
+pub fn main() !void {
+    std.log.debug("{any}", .{Union.Bar});
 }

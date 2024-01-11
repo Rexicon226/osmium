@@ -40,7 +40,7 @@ pub fn run_pyc(manager: *Manager, file_name: []const u8) !void {
     log.debug("Contents:\n{x}", .{source});
 
     const converter = Converter.init(manager.allocator, source);
-    const object = converter.convert();
+    const object = try converter.convert();
 
     var vm = try Vm.init(manager.allocator);
     defer vm.deinit();
