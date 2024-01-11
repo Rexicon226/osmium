@@ -37,8 +37,12 @@ pub fn convert(converter: Converter) !CodeObject {
 
 const Pyc = struct {
     fn parse(allocator: std.mem.Allocator, source: [:0]const u8) !Pyc {
-        const marshal = try Marshal.load(allocator, source);
-        _ = marshal; // autofix
+        const codeobject = try Marshal.load(allocator, source);
+
+        std.debug.print("Name: {s}\n", .{codeobject.filename});
+
+        const bytes = codeobject.code;
+        _ = bytes; // autofix
 
         return .{};
     }

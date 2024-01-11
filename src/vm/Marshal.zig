@@ -27,9 +27,12 @@ references: std.ArrayList(?Reference),
 cursor: u32,
 bytes: []const u8,
 allocator: std.mem.Allocator,
+co: *CodeObject,
 
-pub fn load(allocator: std.mem.Allocator, input_bytes: []const u8) !*const Marshal {
+pub fn load(allocator: std.mem.Allocator, input_bytes: []const u8) !CodeObject {
     var marshal = try allocator.create(Marshal);
+    errdefer allocator.destroy(marshal);
+
     if (input_bytes.len < 4) return error.BytesEmpty;
 
     marshal.bytes = input_bytes;
@@ -37,6 +40,11 @@ pub fn load(allocator: std.mem.Allocator, input_bytes: []const u8) !*const Marsh
     marshal.flag_refs = std.ArrayList(?FlagRef).init(allocator);
     marshal.references = std.ArrayList(?Reference).init(allocator);
     marshal.allocator = allocator;
+
+    const co = try allocator.create(CodeObject);
+    errdefer allocator.destroy(co);
+
+    marshal.co = co;
 
     marshal.set_version(marshal.bytes[0..4].*);
 
@@ -49,7 +57,7 @@ pub fn load(allocator: std.mem.Allocator, input_bytes: []const u8) !*const Marsh
 
     _ = marshal.read_object();
 
-    return marshal;
+    return marshal.co.*;
 }
 
 fn read_object(marshal: *Marshal) Result {
@@ -144,6 +152,16 @@ fn read_codeobject(marshal: *Marshal) Result {
         const name, const method = struc;
         dict.put(name, method(marshal)) catch @panic("failed to put onto co dict");
     }
+
+    const co = marshal.co;
+
+    co.argcount = @intCast(dict.get("argcount").?.Int);
+    co.name = dict.get("name").?.String;
+    co.filename = dict.get("filename").?.String;
+    co.consts = dict.get("consts").?.Tuple;
+    co.stacksize = @intCast(dict.get("stacksize").?.Int);
+    co.code = dict.get("code").?.String;
+
     const result: Result = .{ .Dict = dict };
 
     std.debug.print("Dict:\n{}\n", .{result});
@@ -268,4 +286,25 @@ const ObjType = enum(u8) {
     TYPE_SMALL_TUPLE = ')',
     TYPE_SHORT_ASCII = 'z',
     TYPE_SHORT_ASCII_INTERNED = 'Z',
+};
+
+/// A 3.11 CodeObject
+const CodeObject = struct {
+    /// File name
+    filename: []const u8,
+
+    /// Arguments
+    argcount: u32,
+
+    /// Constants
+    consts: []const Result,
+
+    /// Code Object name
+    name: []const u8,
+
+    /// Stack Size
+    stacksize: u32,
+
+    /// ByteCode
+    code: []const u8,
 };
