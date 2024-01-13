@@ -26,7 +26,7 @@ pub const std_options = struct {
 
 pub fn main() !u8 {
     defer {
-        log.debug("memory usage: {}", .{ arena.state.end_index });
+        log.debug("memory usage: {}", .{arena.state.end_index});
 
         arena.deinit();
         _ = gpa.deinit();
@@ -78,8 +78,8 @@ pub fn main() !u8 {
         var manager = try Manager.init(arena_allocator);
         defer manager.deinit();
 
-        if (options.is_pyc) try manager.run_pyc(file_path) else  try manager.run_file(file_path);
-       
+        if (options.is_pyc) try manager.run_pyc(file_path) else try manager.run_file(file_path);
+
         return 0;
     }
 

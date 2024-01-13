@@ -1,10 +1,14 @@
 //! Serialization of PYC files.
 
 const std = @import("std");
+const ObjType = @import("objtype.zig").ObjType;
+const CodeObject = @import("CodeObject.zig");
 
 const Marshal = @This();
 
 const readInt = std.mem.readInt;
+
+const PyLong_SHIFT = 15;
 
 const FlagRef = struct {
     byte: u32,
@@ -76,40 +80,35 @@ fn read_object(marshal: *Marshal) Result {
 
     switch (ty) {
         .TYPE_CODE => result = marshal.read_codeobject(),
+        .TYPE_LONG => result = marshal.read_py_long(),
 
         .TYPE_STRING,
         .TYPE_UNICODE,
         .TYPE_ASCII,
-        .TYPE_INTERNED,
         .TYPE_ASCII_INTERNED,
         => result = marshal.read_string(.{}),
 
         .TYPE_SMALL_TUPLE => {
-            const size = readInt(u8, marshal.read_bytes(1)[0..1], .little);
-            const results = marshal.allocator.alloc(Result, size) catch @panic("failed to alloc Result");
-            for (0..size) |i| {
-                results[i] = marshal.read_object();
+            const size = marshal.read_bytes(1);
+            var results = std.ArrayList(Result).init(marshal.allocator);
+            for (0..size[0]) |_| {
+                results.append(marshal.read_object()) catch @panic("failed to append to tuple");
             }
-            result = .{ .Tuple = results };
+            result = .{ .Tuple = results.toOwnedSlice() catch @panic("OOM") };
         },
+
+        .TYPE_INT => result = marshal.read_long(),
+        .TYPE_NONE => result = .{ .None = {} },
 
         .TYPE_SHORT_ASCII_INTERNED,
         .TYPE_SHORT_ASCII,
         => result = marshal.read_string(.{ .short = true }),
 
-        .TYPE_INT => result = marshal.read_long(),
-        .TYPE_NONE => result = .{ .None = {} },
-
         .TYPE_REF => {
             const index: u32 = @intCast(marshal.read_long().Int);
-            marshal.references.append(
-                .{ .byte = marshal.cursor, .index = index },
-            ) catch @panic("failed to append ref");
-            const fmt = std.fmt.allocPrint(marshal.allocator, "REF to {d}: {any}", .{
-                index,
-                marshal.flag_refs.items[index],
-            }) catch @panic("failed ref allocprint");
-            result = .{ .String = fmt };
+            marshal.references.append(.{ .byte = marshal.cursor, .index = index }) catch @panic("failed to append to references");
+            marshal.flag_refs.items[index].?.usages += 1;
+            result = .{ .String = std.fmt.allocPrint(marshal.allocator, "ref to {d}", .{index}) catch @panic("OOM") };
         },
 
         else => std.debug.panic("Unsupported ObjType: {s}\n", .{@tagName(ty)}),
@@ -131,19 +130,19 @@ fn read_codeobject(marshal: *Marshal) Result {
         .{ "argcount", read_long },
         .{ "posonlyargcount", read_long },
         .{ "kwonlyargcount", read_long },
+        .{ "nlocals", read_long },
         .{ "stacksize", read_long },
         .{ "flags", read_long },
         .{ "code", read_object },
         .{ "consts", read_object },
         .{ "names", read_object },
-        .{ "localsplusnames", read_object },
-        .{ "localspluskinds", read_object },
+        .{ "varnames", read_object },
+        .{ "freevars", read_object },
+        .{ "cellvars", read_object },
         .{ "filename", read_object },
         .{ "name", read_object },
-        .{ "qualname", read_object },
         .{ "firstlineno", read_long },
-        .{ "linetable", read_object },
-        .{ "exceptiontable", read_object },
+        .{ "lnotab", read_object },
     };
 
     var dict = std.StringArrayHashMap(Result).init(marshal.allocator);
@@ -161,15 +160,12 @@ fn read_codeobject(marshal: *Marshal) Result {
     co.consts = dict.get("consts").?.Tuple;
     co.stacksize = @intCast(dict.get("stacksize").?.Int);
     co.code = dict.get("code").?.String;
+    co.names = dict.get("names").?.Tuple;
 
-    const result: Result = .{ .Dict = dict };
-
-    std.debug.print("Dict:\n{}\n", .{result});
-
-    return result;
+    return .{ .Dict = dict };
 }
 
-const Result = union(enum) {
+pub const Result = union(enum) {
     Int: i32,
     String: []const u8,
     Dict: std.StringArrayHashMap(Result),
@@ -217,6 +213,23 @@ fn read_long(marshal: *Marshal) Result {
     return .{ .Int = int };
 }
 
+fn read_short(marshal: *Marshal) Result {
+    const bytes = marshal.read_bytes(2);
+    const int = readInt(i16, bytes[0..2], .little);
+    return .{ .Int = int };
+}
+
+fn read_py_long(marshal: *Marshal) Result {
+    const n = marshal.read_long().Int;
+    var result: i32 = 0;
+    var shift: u5 = 0;
+    for (0..@abs(n)) |_| {
+        result += marshal.read_short().Int << shift;
+        shift += PyLong_SHIFT;
+    }
+    return .{ .Int = if (n > 0) result else -result };
+}
+
 fn read_string(marshal: *Marshal, options: struct { size: ?u32 = null, short: bool = false }) Result {
     const string_size: u32 = blk: {
         if (options.size) |size| {
@@ -237,7 +250,9 @@ fn set_version(marshal: *Marshal, magic_bytes: [4]u8) void {
     const magic_number = readInt(u16, magic_bytes[0..2], .little);
 
     marshal.python_version = switch (magic_number) {
-        3450...3495 => .{ .major = 3, .minor = 11 },
+        // We only support 3.10 bytecode
+        3430...3439 => .{ .major = 3, .minor = 10 },
+        // 3450...3495 => .{ .major = 3, .minor = 11 },
         else => std.debug.panic("pyc compiled with unsupported magic: {d}", .{magic_number}),
     };
 }
@@ -254,57 +269,3 @@ fn clearBit(int: anytype, comptime offset: @TypeOf(int)) @TypeOf(int) {
 
     return int & ~(@as(u8, 1) << offset);
 }
-
-/// Object Types
-const ObjType = enum(u8) {
-    TYPE_NULL = '0',
-    TYPE_NONE = 'N',
-    TYPE_FALSE = 'F',
-    TYPE_TRUE = 'T',
-    TYPE_STOPITER = 'S',
-    TYPE_ELLIPSIS = '.',
-    TYPE_INT = 'i',
-    TYPE_INT64 = 'I',
-    TYPE_FLOAT = 'f',
-    TYPE_BINARY_FLOAT = 'g',
-    TYPE_COMPLEX = 'x',
-    TYPE_BINARY_COMPLEX = 'y',
-    TYPE_LONG = 'l',
-    TYPE_STRING = 's',
-    TYPE_INTERNED = 't',
-    TYPE_REF = 'r',
-    TYPE_TUPLE = '(',
-    TYPE_LIST = '[',
-    TYPE_DICT = '{',
-    TYPE_CODE = 'c',
-    TYPE_UNICODE = 'u',
-    TYPE_UNKNOWN = '?',
-    TYPE_SET = '<',
-    TYPE_FROZENSET = '>',
-    TYPE_ASCII = 'a',
-    TYPE_ASCII_INTERNED = 'A',
-    TYPE_SMALL_TUPLE = ')',
-    TYPE_SHORT_ASCII = 'z',
-    TYPE_SHORT_ASCII_INTERNED = 'Z',
-};
-
-/// A 3.11 CodeObject
-const CodeObject = struct {
-    /// File name
-    filename: []const u8,
-
-    /// Arguments
-    argcount: u32,
-
-    /// Constants
-    consts: []const Result,
-
-    /// Code Object name
-    name: []const u8,
-
-    /// Stack Size
-    stacksize: u32,
-
-    /// ByteCode
-    code: []const u8,
-};

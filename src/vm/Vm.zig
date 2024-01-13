@@ -3,67 +3,71 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Vm = @This();
+const CodeObject = @import("CodeObject.zig");
+const Instruction = @import("Compiler.zig").Instruction;
 
-const bytecode = @import("../frontend/Compiler.zig");
-const CodeObject = bytecode.CodeObject;
+const Vm = @This();
 
 const builtins = @import("../builtins.zig");
 
 const log = std.log.scoped(.vm);
 
-call_stack: std.ArrayList(CodeObject),
 stack: std.ArrayList(ScopeObject),
 scope: std.StringHashMap(ScopeObject),
 program_counter: usize,
 
 allocator: Allocator,
 
-pub fn init(alloc: Allocator) !Vm {
+is_running: bool,
+
+pub fn init() !Vm {
     return .{
-        .call_stack = std.ArrayList(CodeObject).init(alloc),
-        .stack = std.ArrayList(ScopeObject).init(alloc),
-        .scope = std.StringHashMap(ScopeObject).init(alloc),
-        .allocator = alloc,
+        .stack = undefined,
+        .scope = undefined,
+        .allocator = undefined,
         .program_counter = 0,
+        .is_running = false,
     };
 }
 
-pub fn deinit(vm: *Vm) void {
-    vm.stack.deinit();
-    vm.scope.deinit();
-}
+/// Creates an Arena around `alloc` and runs the instructions.
+pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
+    // Setup
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
 
-pub fn run(vm: *Vm, object: CodeObject) !void {
+    const allocator = arena.allocator();
+
+    vm.allocator = allocator;
+
+    vm.stack = std.ArrayList(ScopeObject).init(allocator);
+    vm.scope = std.StringHashMap(ScopeObject).init(allocator);
+
+    // Run
+    vm.is_running = true;
+
     // Add the builtins to the scope.
     inline for (builtins.builtin_fns) |builtin_fn| {
         const name, const ref = builtin_fn;
         try vm.scope.put(name, .{ .zig_function = ref });
     }
 
-    const current_frame = object;
-
-    while (true) {
-        if (vm.program_counter >= current_frame.instructions.items.len) break;
-
-        const instruction = current_frame.instructions.items[vm.program_counter];
-        log.debug("Executing Instruction: {} (stacksize={}, pc={}/{})", .{
+    while (vm.is_running) {
+        const instruction = instructions[vm.program_counter];
+        log.debug("Executing Instruction: {} (stacksize={}, pc={}/{}, mem={s})", .{
             instruction,
             vm.stack.items.len,
             vm.program_counter,
-            object.instructions.items.len,
+            instructions.len,
+            std.fmt.fmtIntSizeDec(arena.state.end_index),
         });
+
         vm.program_counter += 1;
         try vm.exec(instruction);
     }
 }
 
-/// Jump to a label in the current frame.
-fn jump(vm: *Vm, target: Label) void {
-    vm.program_counter = target;
-}
-
-fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
+fn exec(vm: *Vm, inst: Instruction) !void {
     switch (inst) {
         .LoadConst => |load_const| {
             switch (load_const.value) {
@@ -74,7 +78,11 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
                 .String => |string| {
                     _ = string;
 
-                    @panic("todo");
+                    @panic("todo String LoadConst");
+                },
+                .None => {
+                    const obj = ScopeObject.newNone();
+                    try vm.stack.append(obj);
                 },
             }
         },
@@ -95,12 +103,25 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             try vm.scope.put(store_name.name, ref);
         },
 
-        .Pop => _ = vm.stack.pop(),
-        .ReturnValue => _ = vm.stack.pop(),
+        .Pop => {
+            if (vm.stack.items.len == 0) {
+                @panic("stack underflow");
+            }
+
+            _ = vm.stack.pop();
+        },
+
+        .ReturnValue => {
+            _ = vm.stack.pop();
+            // We just stop the vm when return
+            vm.is_running = false;
+        },
 
         .CallFunction => |call_function| {
             var args = try vm.allocator.alloc(ScopeObject, call_function.arg_count);
+            defer vm.allocator.free(args);
 
+            // Arguments are pushed in reverse order.
             for (0..args.len) |i| {
                 args[args.len - i - 1] = vm.stack.pop();
             }
@@ -113,8 +134,11 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
 
                 @call(.auto, ref, .{args});
             } else {
-                std.debug.panic("callFunction ref is not zig_function", .{});
+                std.debug.panic("callFunction ref is not zig_function, found: {s}", .{@tagName(function)});
             }
+
+            // For now, all builtin functions are assumed to return None
+            try vm.stack.append(ScopeObject.newNone());
         },
 
         .BinaryOperation => |bin_op| {
@@ -154,7 +178,7 @@ fn exec(vm: *Vm, inst: bytecode.Instruction) !void {
             try vm.stack.append(ScopeObject.newBoolean(result));
         },
 
-        else => log.warn("TODO: {s}", .{@tagName(inst)}),
+        else => log.warn("TODO: exec {s}", .{@tagName(inst)}),
     }
 }
 
@@ -164,12 +188,20 @@ pub const ScopeObject = union(enum) {
     value: i32,
     string: []const u8,
     boolean: bool,
+    none: void,
 
+    // Arguments can have any meaning, depending on what the function does.
     zig_function: *const fn ([]ScopeObject) void,
 
     pub fn newVal(value: i32) ScopeObject {
         return .{
             .value = value,
+        };
+    }
+
+    pub fn newNone() ScopeObject {
+        return .{
+            .none = {},
         };
     }
 
@@ -194,10 +226,11 @@ pub const ScopeObject = union(enum) {
         std.debug.assert(fmt.len == 0);
 
         switch (self) {
-            .value => |val| try writer.print("{}", .{val}),
+            .value => |val| try writer.print("{d}", .{val}),
             .string => |string| try writer.print("{s}", .{string}),
             .boolean => |boolean| try writer.print("{}", .{boolean}),
-            .zig_function => @panic("cannot print function ScopeObject"),
+            .none => try writer.print("None", .{}),
+            .zig_function => @panic("cannot print zig_function"),
         }
     }
 };
