@@ -245,6 +245,23 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             try vm.stack.append(obj);
         },
 
+        // TOS1[TOS] = TOS2
+        .StoreSubScr => {
+            const index = vm.stack.pop();
+            const array = vm.stack.pop();
+            const value = vm.stack.pop();
+
+            switch (array) {
+                .list => |list| {
+                    if (index != .value) @panic("index value must be a value");
+                    if (index.value < 0) @panic("index value less than 0");
+
+                    list.items[@intCast(index.value)] = value;
+                },
+                else => std.debug.panic("only list can do index assignment, found: {s}", .{@tagName(array)}),
+            }
+        },
+
         else => std.debug.panic("TODO: exec {s}", .{@tagName(inst)}),
     }
 }
@@ -310,7 +327,7 @@ pub const ScopeObject = union(enum) {
 
         switch (self) {
             .value => |val| try writer.print("{d}", .{val}),
-            .string => |string| try writer.print("{s}", .{string}),
+            .string => |string| try writer.print("'{s}'", .{string}),
             .boolean => |boolean| try writer.print("{}", .{boolean}),
             .none => try writer.print("None", .{}),
             .tuple => |tuple| {

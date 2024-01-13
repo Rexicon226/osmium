@@ -130,6 +130,12 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 cursor += 2;
             },
 
+            .STORE_SUBSCR => {
+                const inst = Instruction{ .StoreSubScr = {} };
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
             else => std.debug.panic("Unhandled opcode: {s}", .{@tagName(op)}),
         }
     }
@@ -152,6 +158,7 @@ pub const Instruction = union(enum) {
     Pass: void,
     Continue: void,
     Break: void,
+    StoreSubScr: void,
 
     // Jump
     popJump: struct { case: bool, target: u32 },
