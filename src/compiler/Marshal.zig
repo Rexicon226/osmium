@@ -10,14 +10,14 @@ const readInt = std.mem.readInt;
 
 const PyLong_SHIFT = 15;
 
-const FlagRef = struct {
+pub const FlagRef = struct {
     byte: u32,
     ty: ObjType,
     content: Result,
     usages: u32 = 0,
 };
 
-const Reference = struct {
+pub const Reference = struct {
     byte: u32,
     index: u32,
 };
@@ -25,6 +25,8 @@ const Reference = struct {
 // Fields
 python_version: struct { major: u8, minor: u8 },
 flag_refs: std.ArrayList(?FlagRef),
+
+// Deduplication. Basically an internpool.
 references: std.ArrayList(?Reference),
 
 // Other
@@ -44,11 +46,6 @@ pub fn load(allocator: std.mem.Allocator, input_bytes: []const u8) !CodeObject {
     marshal.flag_refs = std.ArrayList(?FlagRef).init(allocator);
     marshal.references = std.ArrayList(?Reference).init(allocator);
     marshal.allocator = allocator;
-
-    const co = try allocator.create(CodeObject);
-    errdefer allocator.destroy(co);
-
-    marshal.co = co;
 
     marshal.set_version(marshal.bytes[0..4].*);
 
@@ -79,7 +76,6 @@ fn read_object(marshal: *Marshal) Result {
     var result: Result = undefined;
 
     switch (ty) {
-        .TYPE_CODE => result = marshal.read_codeobject(),
         .TYPE_LONG => result = marshal.read_py_long(),
 
         .TYPE_STRING,
@@ -108,8 +104,17 @@ fn read_object(marshal: *Marshal) Result {
             const index: u32 = @intCast(marshal.read_long().Int);
             marshal.references.append(.{ .byte = marshal.cursor, .index = index }) catch @panic("failed to append to references");
             marshal.flag_refs.items[index].?.usages += 1;
-            result = .{ .String = std.fmt.allocPrint(marshal.allocator, "ref to {d}", .{index}) catch @panic("OOM") };
+            result = .{
+                .Ref = .{
+                    .byte = marshal.cursor,
+                    .index = index,
+                },
+            };
         },
+
+        // This causes marshal to free some memory, so we just return to prevent it
+        // from access flag_refs again.
+        .TYPE_CODE => return marshal.read_codeobject(),
 
         else => std.debug.panic("Unsupported ObjType: {s}\n", .{@tagName(ty)}),
     }
@@ -152,7 +157,8 @@ fn read_codeobject(marshal: *Marshal) Result {
         dict.put(name, method(marshal)) catch @panic("failed to put onto co dict");
     }
 
-    const co = marshal.co;
+    const co = marshal.allocator.create(CodeObject) catch @panic("failed to allocate codeobject");
+    errdefer marshal.allocator.free(co);
 
     co.argcount = @intCast(dict.get("argcount").?.Int);
     co.name = dict.get("name").?.String;
@@ -161,6 +167,10 @@ fn read_codeobject(marshal: *Marshal) Result {
     co.stacksize = @intCast(dict.get("stacksize").?.Int);
     co.code = dict.get("code").?.String;
     co.names = dict.get("names").?.Tuple;
+
+    co.flag_refs = marshal.flag_refs.toOwnedSlice() catch @panic("OOM");
+
+    marshal.co = co;
 
     return .{ .Dict = dict };
 }
@@ -173,26 +183,61 @@ pub const Result = union(enum) {
     None: void,
     Bool: bool,
 
+    // Internal
+    Ref: Reference,
+
     pub fn format(
-        self: Result,
-        comptime fmt: []const u8,
+        _: Result,
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        _: anytype,
+    ) !void {
+        @compileError("use Result.fmt() instead");
+    }
+
+    // A special pretty printer for Result
+    fn format2(
+        ctx: FormatContext,
+        comptime unused_fmt_bytes: []const u8,
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        std.debug.assert(fmt.len == 0);
+        std.debug.assert(unused_fmt_bytes.len == 0);
 
-        switch (self) {
-            .Int => |int| try writer.print("Int: {d}", .{int}),
-            .String => |string| try writer.print("String: '{s}'", .{string}),
+        const co = ctx.co;
+        const result = ctx.result;
+
+        switch (result) {
+            .Int => |int| try writer.print("{d}", .{int}),
             .Tuple => |tuple| {
-                try writer.print("Tuple:", .{});
-                for (tuple) |entry| try writer.print("\n\t{}", .{entry});
+                try writer.print("(", .{});
+                for (tuple, 0..) |tup, i| {
+                    try writer.print("{}", .{tup.fmt(co)});
+
+                    if (i < tuple.len - 1) try writer.print(", ", .{});
+                }
+                try writer.print(")", .{});
             },
-            .Dict => |dict| for (dict.values()) |value| try writer.print("{}\n", .{value}),
+            .Ref => |ref| {
+                try writer.print("{}", .{(co.flag_refs[ref.index] orelse unreachable).content.fmt(co)});
+            },
             .None => try writer.print("None", .{}),
-            .Bool => |b| try writer.print("{}", .{b}),
+            .String => |string| try writer.print("{s}", .{string}),
+            else => std.debug.panic("TODO: Result.format2 {s}", .{@tagName(result)}),
         }
     }
+
+    pub fn fmt(self: Result, co: CodeObject) std.fmt.Formatter(format2) {
+        return .{ .data = .{
+            .co = co,
+            .result = self,
+        } };
+    }
+
+    const FormatContext = struct {
+        co: CodeObject,
+        result: Result,
+    };
 };
 
 fn next(marshal: *Marshal) u8 {
@@ -245,7 +290,7 @@ fn read_string(marshal: *Marshal, options: struct { size: ?u32 = null, short: bo
     return .{ .String = marshal.read_bytes(string_size) };
 }
 
-/// Returns false if no supported python version could be found in the magic bytes.
+/// Sets the marshal's version.
 fn set_version(marshal: *Marshal, magic_bytes: [4]u8) void {
     const magic_number = readInt(u16, magic_bytes[0..2], .little);
 
@@ -257,15 +302,12 @@ fn set_version(marshal: *Marshal, magic_bytes: [4]u8) void {
     };
 }
 
-fn testBit(int: anytype, comptime offset: @TypeOf(int)) bool {
-    if (offset < 0 or offset > 7) @panic("testBit: invalid offset");
-
+///  Set's a bit at `offset` in `int`
+fn testBit(int: anytype, comptime offset: u8) bool {
     const mask = @as(u8, 1) << offset;
     return (int & mask) != 0;
 }
 
-fn clearBit(int: anytype, comptime offset: @TypeOf(int)) @TypeOf(int) {
-    if (offset < 0 or offset > 7) @panic("clearBit: invalid offset");
-
+fn clearBit(int: anytype, comptime offset: u8) @TypeOf(int) {
     return int & ~(@as(u8, 1) << offset);
 }

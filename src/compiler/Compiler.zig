@@ -26,7 +26,6 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
 
     const bytes = co.code;
 
-    // 1 to skip the RESULT op
     var cursor: u32 = 0;
     while (cursor < bytes.len) {
         const op: OpCode = @enumFromInt(bytes[cursor]);
@@ -39,6 +38,18 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                     .Int => |int| Instruction.loadConst(.{ .Integer = int }),
                     .None => Instruction.loadNone(),
                     .String => |string| Instruction.loadConst(.{ .String = string }),
+                    .Tuple => |tuple| blk: {
+                        var tuple_list = std.ArrayList(Constant).init(compiler.allocator);
+                        for (tuple) |tup| {
+                            switch (tup) {
+                                .Int => |int| try tuple_list.append(.{ .Integer = int }),
+                                else => std.debug.panic("cannot reify tuple that contains type: {s}", .{
+                                    @tagName(tup),
+                                }),
+                            }
+                        }
+                        break :blk Instruction.loadConst(.{ .Tuple = try tuple_list.toOwnedSlice() });
+                    },
                     else => |panic_op| std.debug.panic("cannot load inst {s}", .{@tagName(panic_op)}),
                 };
                 try instructions.append(inst);
@@ -210,6 +221,7 @@ pub const Instruction = union(enum) {
 pub const Constant = union(enum) {
     String: []const u8,
     Integer: i32,
+    Tuple: []const Constant,
     None: void,
 };
 

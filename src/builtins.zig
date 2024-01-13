@@ -1,4 +1,5 @@
-// Scope References to builtin functions
+//! Scope References to builtin functions
+// NOTE: Builtin functions are expected to append their returns to the stack themselves.
 
 const std = @import("std");
 const Vm = @import("vm/Vm.zig");
@@ -17,7 +18,6 @@ fn print(vm: *Vm, args: []Vm.ScopeObject) void {
 
     stdout.print("\n", .{}) catch @panic("failed to builtin print");
 
-    // Return value
     vm.stack.append(Vm.ScopeObject.newNone()) catch @panic("print() failed to append to stack");
 }
 
@@ -27,6 +27,7 @@ fn len(vm: *Vm, args: []Vm.ScopeObject) void {
     const arglen = len: {
         switch (args[0]) {
             .string => |string| break :len string.len,
+            .tuple => |tuple| break :len tuple.items.len,
             else => |panic_arg| std.debug.panic("len() found incompatible arg of type: {s}", .{@tagName(panic_arg)}),
         }
         unreachable;

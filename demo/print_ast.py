@@ -1,7 +1,10 @@
 
-import ast
+import marshal
 
 filename = './demo/test.py'
 with open(filename, 'r') as f:
     src = f.read()
-print(ast.dump(ast.parse(src), indent=4))
+
+code = compile(src, filename, 'exec')
+print(code.co_consts)
+

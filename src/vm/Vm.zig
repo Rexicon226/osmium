@@ -79,6 +79,19 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                     const obj = ScopeObject.newString(string);
                     try vm.stack.append(obj);
                 },
+                .Tuple => |tuple| {
+                    var scope_list = std.ArrayList(ScopeObject).init(vm.allocator);
+                    for (tuple) |tup| {
+                        switch (tup) {
+                            .Integer => |int| try scope_list.append(ScopeObject.newVal(int)),
+                            else => std.debug.panic("cannot vm tuple that contains type: {s}", .{
+                                @tagName(tup),
+                            }),
+                        }
+                    }
+                    const obj = ScopeObject.newTuple(try scope_list.toOwnedSlice(), vm.allocator);
+                    try vm.stack.append(obj);
+                },
                 .None => {
                     const obj = ScopeObject.newNone();
                     try vm.stack.append(obj);
@@ -254,6 +267,14 @@ pub const ScopeObject = union(enum) {
         };
     }
 
+    pub fn newTuple(tuple: []ScopeObject, ally: Allocator) ScopeObject {
+        var array_list = std.ArrayList(ScopeObject).init(ally);
+        array_list.appendSlice(tuple) catch @panic("failed to init tuple");
+        return .{
+            .tuple = array_list,
+        };
+    }
+
     pub fn format(
         self: ScopeObject,
         comptime fmt: []const u8,
@@ -267,6 +288,16 @@ pub const ScopeObject = union(enum) {
             .string => |string| try writer.print("{s}", .{string}),
             .boolean => |boolean| try writer.print("{}", .{boolean}),
             .none => try writer.print("None", .{}),
+            .tuple => |tuple| {
+                try writer.print("(", .{});
+                for (tuple.items, 0..) |tup, i| {
+                    try writer.print("{}", .{tup});
+
+                    // Is there a next element
+                    if (i < tuple.items.len - 1) try writer.print(", ", .{});
+                }
+                try writer.print(")", .{});
+            },
             .zig_function => @panic("cannot print zig_function"),
         }
     }
