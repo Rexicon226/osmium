@@ -76,9 +76,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                     try vm.stack.append(obj);
                 },
                 .String => |string| {
-                    _ = string;
-
-                    @panic("todo String LoadConst");
+                    const obj = ScopeObject.newString(string);
+                    try vm.stack.append(obj);
                 },
                 .None => {
                     const obj = ScopeObject.newNone();
@@ -153,18 +152,33 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                 .Subtract => lhs - rhs,
                 .Multiply => lhs * rhs,
                 .Divide => @divTrunc(lhs, rhs),
-                else => @panic("TODO: binaryOP"),
+                .Power => std.math.pow(i32, lhs, rhs),
+                .Lshift => blk: {
+                    if (rhs > std.math.maxInt(u5)) @panic("Lshift with rhs greater than max(u5)");
+
+                    break :blk lhs << @as(u5, @intCast(rhs));
+                },
+                .Rshift => blk: {
+                    if (rhs > std.math.maxInt(u5)) @panic("Rshift with rhs greater than max(u5)");
+
+                    break :blk lhs >> @as(u5, @intCast(rhs));
+                },
+                else => std.debug.panic("TODO: BinaryOperator {s}", .{@tagName(bin_op.op)}),
             };
 
             try vm.stack.append(ScopeObject.newVal(result));
         },
 
         .CompareOperation => |comp_op| {
-            const lhs_obj = vm.stack.pop();
+            // rhs is first on the stack
             const rhs_obj = vm.stack.pop();
+            const lhs_obj = vm.stack.pop();
 
             const lhs = lhs_obj.value;
             const rhs = rhs_obj.value;
+
+            log.debug("CompareOp: {s}", .{@tagName(comp_op.op)});
+            log.debug("LHS: {}, RHS: {}", .{ lhs, rhs });
 
             const result = switch (comp_op.op) {
                 .Equal => lhs == rhs,
@@ -178,22 +192,31 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             try vm.stack.append(ScopeObject.newBoolean(result));
         },
 
+        // I read this wrong the first time.
+        // Note to self, pop-jump. Pop, and jump if case.
         .popJump => |pop_jump| {
-            const condition_to_meet = pop_jump.case;
+            const ctm = pop_jump.case;
 
-            const condition = vm.stack.pop();
+            const tos = vm.stack.pop();
 
-            if (condition != .boolean) {
-                std.debug.panic("popJump condition is not boolean, found: {s}", .{@tagName(condition)});
+            if (tos != .boolean) {
+                std.debug.panic("popJump condition is not boolean, found: {s}", .{@tagName(tos)});
             }
 
-            if (condition.boolean == condition_to_meet) {
-                vm.program_counter = pop_jump.target;
+            log.debug("TOS was: {}", .{tos.boolean});
+
+            if (tos.boolean == ctm) {
+                vm.jump(pop_jump.target);
             }
         },
 
         else => std.debug.panic("TODO: exec {s}", .{@tagName(inst)}),
     }
+}
+
+// Jump Logic
+fn jump(vm: *Vm, target: u32) void {
+    vm.program_counter = target;
 }
 
 const Label = usize;

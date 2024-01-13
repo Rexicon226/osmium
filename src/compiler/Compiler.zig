@@ -38,7 +38,8 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 const inst = switch (co.consts[index]) {
                     .Int => |int| Instruction.loadConst(.{ .Integer = int }),
                     .None => Instruction.loadNone(),
-                    else => @panic("cannot coerce to int"),
+                    .String => |string| Instruction.loadConst(.{ .String = string }),
+                    else => |panic_op| std.debug.panic("cannot load inst {s}", .{@tagName(panic_op)}),
                 };
                 try instructions.append(inst);
                 cursor += 2;
