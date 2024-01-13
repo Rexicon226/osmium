@@ -123,6 +123,13 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 cursor += 2;
             },
 
+            .BUILD_LIST => {
+                const len = bytes[cursor + 1];
+                const inst = Instruction{ .BuildList = .{ .len = len } };
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
             else => std.debug.panic("Unhandled opcode: {s}", .{@tagName(op)}),
         }
     }
@@ -156,6 +163,9 @@ pub const Instruction = union(enum) {
     CompareOperation: struct { op: CompareOp },
 
     ReturnValue: void,
+
+    // These happen at runtime
+    BuildList: struct { len: u32 },
 
     pub fn loadConst(value: Constant) Instruction {
         return .{

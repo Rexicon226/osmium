@@ -222,6 +222,29 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             }
         },
 
+        .BuildList => |build_list| {
+            const len = build_list.len;
+
+            var list = std.ArrayList(ScopeObject).init(vm.allocator);
+            try list.ensureTotalCapacity(len);
+
+            // TODO: bruh, what is this lmao.
+
+            try list.append(.none);
+
+            // Popped in reverse order.
+            for (0..len) |i| {
+                try list.append(.none);
+                const index = len - i - 1;
+                list.items[index] = vm.stack.pop();
+            }
+
+            _ = list.pop();
+
+            const obj = ScopeObject{ .list = list };
+            try vm.stack.append(obj);
+        },
+
         else => std.debug.panic("TODO: exec {s}", .{@tagName(inst)}),
     }
 }
@@ -237,8 +260,10 @@ pub const ScopeObject = union(enum) {
     value: i32,
     string: []const u8,
     boolean: bool,
-    tuple: std.ArrayList(ScopeObject),
     none: void,
+
+    tuple: std.ArrayList(ScopeObject),
+    list: std.ArrayList(ScopeObject),
 
     // Arguments can have any meaning, depending on what the function does.
     zig_function: *const fn (*Vm, []ScopeObject) void,
@@ -297,6 +322,16 @@ pub const ScopeObject = union(enum) {
                     if (i < tuple.items.len - 1) try writer.print(", ", .{});
                 }
                 try writer.print(")", .{});
+            },
+            .list => |list| {
+                try writer.print("[", .{});
+                for (list.items, 0..) |tup, i| {
+                    try writer.print("{}", .{tup});
+
+                    // Is there a next element
+                    if (i < list.items.len - 1) try writer.print(", ", .{});
+                }
+                try writer.print("]", .{});
             },
             .zig_function => @panic("cannot print zig_function"),
         }
