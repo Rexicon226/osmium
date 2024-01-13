@@ -8,9 +8,9 @@ const Manager = @This();
 // const Tokenizer = @import("frontend/tokenizer/Tokenizer.zig");
 // const Parser = @import("frontend/Parser.zig");
 
-const Marshal = @import("vm/Marshal.zig");
+const Marshal = @import("compiler/Marshal.zig");
 const Vm = @import("vm/Vm.zig");
-const Compiler = @import("vm/Compiler.zig");
+const Compiler = @import("compiler/Compiler.zig");
 
 const log = std.log.scoped(.manager);
 

@@ -3,8 +3,8 @@
 const std = @import("std");
 const CodeObject = @import("CodeObject.zig");
 
-const OpCodeIds = @import("opcode_ids.zig");
-const OpCode = OpCodeIds.OpCode;
+const OpCodes = @import("opcodes.zig");
+const OpCode = OpCodes.OpCode;
 
 const Compiler = @This();
 const log = std.log.scoped(.compiler);
@@ -80,6 +80,38 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 try instructions.append(inst);
                 cursor += 2;
             },
+
+            // Used for optimizations, literally does nothing.
+            .NOP => cursor += 2,
+
+            .POP_JUMP_IF_FALSE => {
+                const target = bytes[cursor + 1];
+                const inst = Instruction.newPopJump(false, target);
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
+            .POP_JUMP_IF_TRUE => {
+                const target = bytes[cursor + 1];
+                const inst = Instruction.newPopJump(true, target);
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
+            .COMPARE_OP => {
+                const cmp_op: CompareOp = @enumFromInt(bytes[cursor + 1]);
+                const inst = Instruction{ .CompareOperation = .{ .op = cmp_op } };
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
+            .INPLACE_ADD => {
+                const inst = Instruction{ .BinaryOperation = .{ .op = .Add } };
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
+            else => std.debug.panic("Unhandled opcode: {s}", .{@tagName(op)}),
         }
     }
 
@@ -101,6 +133,9 @@ pub const Instruction = union(enum) {
     Pass: void,
     Continue: void,
     Break: void,
+
+    // Jump
+    popJump: struct { case: bool, target: u32 },
 
     CallFunction: struct { arg_count: usize },
 
@@ -150,6 +185,15 @@ pub const Instruction = union(enum) {
         };
     }
 
+    pub fn newPopJump(case: bool, target: u32) Instruction {
+        return .{
+            .popJump = .{
+                .case = case,
+                .target = target,
+            },
+        };
+    }
+
     pub fn format(
         self: Instruction,
         comptime fmt: []const u8,
@@ -192,24 +236,16 @@ pub const BinaryOp = enum {
     }
 };
 
+pub const CompareOp = enum(u8) {
+    Less = 0,
+    LessEqual = 1,
+    Equal = 2,
+    NotEqual = 3,
+    Greater = 4,
+    GreaterEqual = 5,
+};
+
 pub const UnaryOp = enum {
     Not,
     Minus,
-};
-
-pub const CompareOp = enum {
-    Equal,
-    NotEqual,
-    Less,
-    LessEqual,
-    Greater,
-    GreaterEqual,
-
-    pub fn newCompareOp(op: CompareOp) Instruction {
-        return .{
-            .CompareOperation = .{
-                .op = op,
-            },
-        };
-    }
 };

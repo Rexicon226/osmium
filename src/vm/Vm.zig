@@ -3,8 +3,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const CodeObject = @import("CodeObject.zig");
-const Instruction = @import("Compiler.zig").Instruction;
+const CodeObject = @import("../compiler/CodeObject.zig");
+const Instruction = @import("../compiler/Compiler.zig").Instruction;
 
 const Vm = @This();
 
@@ -178,7 +178,21 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             try vm.stack.append(ScopeObject.newBoolean(result));
         },
 
-        else => log.warn("TODO: exec {s}", .{@tagName(inst)}),
+        .popJump => |pop_jump| {
+            const condition_to_meet = pop_jump.case;
+
+            const condition = vm.stack.pop();
+
+            if (condition != .boolean) {
+                std.debug.panic("popJump condition is not boolean, found: {s}", .{@tagName(condition)});
+            }
+
+            if (condition.boolean == condition_to_meet) {
+                vm.program_counter = pop_jump.target;
+            }
+        },
+
+        else => std.debug.panic("TODO: exec {s}", .{@tagName(inst)}),
     }
 }
 
