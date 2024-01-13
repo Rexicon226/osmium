@@ -131,13 +131,12 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             if (function == .zig_function) {
                 const ref = function.zig_function;
 
-                @call(.auto, ref, .{args});
+                @call(.auto, ref, .{ vm, args });
             } else {
                 std.debug.panic("callFunction ref is not zig_function, found: {s}", .{@tagName(function)});
             }
 
-            // For now, all builtin functions are assumed to return None
-            try vm.stack.append(ScopeObject.newNone());
+            // NOTE: builtin functions are expected to handle their own args.
         },
 
         .BinaryOperation => |bin_op| {
@@ -225,10 +224,11 @@ pub const ScopeObject = union(enum) {
     value: i32,
     string: []const u8,
     boolean: bool,
+    tuple: std.ArrayList(ScopeObject),
     none: void,
 
     // Arguments can have any meaning, depending on what the function does.
-    zig_function: *const fn ([]ScopeObject) void,
+    zig_function: *const fn (*Vm, []ScopeObject) void,
 
     pub fn newVal(value: i32) ScopeObject {
         return .{

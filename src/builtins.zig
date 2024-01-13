@@ -1,13 +1,14 @@
 // Scope References to builtin functions
 
 const std = @import("std");
-const vm = @import("vm/Vm.zig");
+const Vm = @import("vm/Vm.zig");
 
 pub const builtin_fns = &.{
     .{ "print", print },
+    .{ "len", len },
 };
 
-fn print(args: []vm.ScopeObject) void {
+fn print(vm: *Vm, args: []Vm.ScopeObject) void {
     const stdout = std.io.getStdOut().writer();
 
     for (args) |arg| {
@@ -15,4 +16,21 @@ fn print(args: []vm.ScopeObject) void {
     }
 
     stdout.print("\n", .{}) catch @panic("failed to builtin print");
+
+    // Return value
+    vm.stack.append(Vm.ScopeObject.newNone()) catch @panic("print() failed to append to stack");
+}
+
+fn len(vm: *Vm, args: []Vm.ScopeObject) void {
+    if (args.len != 1) std.debug.panic("len() takes exactly one argument, found {d}", .{args.len});
+
+    const arglen = len: {
+        switch (args[0]) {
+            .string => |string| break :len string.len,
+            else => |panic_arg| std.debug.panic("len() found incompatible arg of type: {s}", .{@tagName(panic_arg)}),
+        }
+        unreachable;
+    };
+
+    vm.stack.append(Vm.ScopeObject.newVal(@intCast(arglen))) catch @panic("len() failed to append to stack");
 }
