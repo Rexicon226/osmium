@@ -262,6 +262,17 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             }
         },
 
+        // Swaps TOS and TOS1
+        .RotTwo => {
+            const tos = vm.stack.pop();
+            try vm.stack.insert(1, tos);
+        },
+
+        // Increment the counter by delta
+        .JumpForward => |jump_forward| {
+            vm.program_counter += jump_forward.delta;
+        },
+
         else => std.debug.panic("TODO: exec {s}", .{@tagName(inst)}),
     }
 }

@@ -15,6 +15,7 @@ const version = "0.1.0";
 const ArgFlags = struct {
     file_path: ?[]const u8 = null,
     is_pyc: bool = false,
+    debug_print: bool = false,
 };
 
 pub const std_options = struct {
@@ -53,6 +54,10 @@ pub fn main() !u8 {
             return 0;
         }
 
+        // if (isEqual(arg, "--debug")) {
+        //     options.debug_print = true;
+        // }
+
         // Check if a .py file.
         if (std.mem.endsWith(u8, arg, ".py")) {
             if (options.file_path) |_| {
@@ -78,7 +83,7 @@ pub fn main() !u8 {
         var manager = try Manager.init(arena_allocator);
         defer manager.deinit();
 
-        if (options.is_pyc) try manager.run_pyc(file_path) else try manager.run_file(file_path);
+        if (options.is_pyc) try manager.run_pyc(file_path) else @panic("can only run .pyc");
 
         return 0;
     }
@@ -99,6 +104,7 @@ fn usage() void {
         \\ Options:
         \\  --help, -h    Print this message
         \\  --version, -v Print the version
+        // \\  --debug       Enables the debug printing
     ;
 
     stdout.print(usage_string, .{}) catch |err| {
@@ -109,7 +115,7 @@ fn usage() void {
 fn versionPrint() void {
     const stdout = std.io.getStdOut().writer();
 
-    stdout.print("Osmium {s}, created by David Rubin", .{version}) catch |err| {
+    stdout.print("Osmium {s}, created by David Rubin\n", .{version}) catch |err| {
         std.debug.panic("Failed to print version: {}\n", .{err});
     };
 }

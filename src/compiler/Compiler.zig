@@ -83,7 +83,6 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
             .POP_TOP => {
                 const inst = Instruction.Pop;
                 try instructions.append(inst);
-                // TODO: Why is this 2?
                 cursor += 2;
             },
 
@@ -136,6 +135,25 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 cursor += 2;
             },
 
+            .ROT_TWO => {
+                const inst = Instruction.RotTwo;
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
+            .BINARY_ADD => {
+                const inst = Instruction.newBinOp(.Add);
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
+            .JUMP_FORWARD => {
+                const delta = bytes[cursor + 1];
+                const inst = Instruction{ .JumpForward = .{ .delta = delta } };
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
             else => std.debug.panic("Unhandled opcode: {s}", .{@tagName(op)}),
         }
     }
@@ -158,10 +176,14 @@ pub const Instruction = union(enum) {
     Pass: void,
     Continue: void,
     Break: void,
+
+    // < 90
     StoreSubScr: void,
+    RotTwo: void,
 
     // Jump
     popJump: struct { case: bool, target: u32 },
+    JumpForward: struct { delta: u32 },
 
     CallFunction: struct { arg_count: usize },
 
@@ -221,6 +243,12 @@ pub const Instruction = union(enum) {
                 .target = target,
             },
         };
+    }
+
+    pub fn newBinOp(op: BinaryOp) Instruction {
+        return .{ .BinaryOperation = .{
+            .op = op,
+        } };
     }
 
     pub fn format(
