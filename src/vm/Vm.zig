@@ -89,7 +89,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                             }),
                         }
                     }
-                    const obj = ScopeObject.newTuple(try scope_list.toOwnedSlice(), vm.allocator);
+                    const obj = ScopeObject.newTuple(try scope_list.toOwnedSlice());
                     try vm.stack.append(obj);
                 },
                 .None => {
@@ -279,7 +279,7 @@ pub const ScopeObject = union(enum) {
     boolean: bool,
     none: void,
 
-    tuple: std.ArrayList(ScopeObject),
+    tuple: []const ScopeObject,
     list: std.ArrayList(ScopeObject),
 
     // Arguments can have any meaning, depending on what the function does.
@@ -309,11 +309,9 @@ pub const ScopeObject = union(enum) {
         };
     }
 
-    pub fn newTuple(tuple: []ScopeObject, ally: Allocator) ScopeObject {
-        var array_list = std.ArrayList(ScopeObject).init(ally);
-        array_list.appendSlice(tuple) catch @panic("failed to init tuple");
+    pub fn newTuple(tuple: []const ScopeObject) ScopeObject {
         return .{
-            .tuple = array_list,
+            .tuple = tuple,
         };
     }
 
@@ -332,11 +330,11 @@ pub const ScopeObject = union(enum) {
             .none => try writer.print("None", .{}),
             .tuple => |tuple| {
                 try writer.print("(", .{});
-                for (tuple.items, 0..) |tup, i| {
+                for (tuple, 0..) |tup, i| {
                     try writer.print("{}", .{tup});
 
                     // Is there a next element
-                    if (i < tuple.items.len - 1) try writer.print(", ", .{});
+                    if (i < tuple.len - 1) try writer.print(", ", .{});
                 }
                 try writer.print(")", .{});
             },

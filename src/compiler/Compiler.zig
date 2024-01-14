@@ -131,7 +131,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
             },
 
             .STORE_SUBSCR => {
-                const inst = Instruction{ .StoreSubScr = {} };
+                const inst = Instruction.StoreSubScr;
                 try instructions.append(inst);
                 cursor += 2;
             },

@@ -27,7 +27,7 @@ fn len(vm: *Vm, args: []Vm.ScopeObject) void {
     const arglen = len: {
         switch (args[0]) {
             .string => |string| break :len string.len,
-            .tuple => |tuple| break :len tuple.items.len,
+            .tuple => |tuple| break :len tuple.len,
             else => |panic_arg| std.debug.panic("len() found incompatible arg of type: {s}", .{@tagName(panic_arg)}),
         }
         unreachable;
