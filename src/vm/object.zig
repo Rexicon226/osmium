@@ -61,6 +61,7 @@ pub const PyObject = extern union {
     // Meta
 
     pub fn toTag(self: PyObject) Tag {
+        // std.debug.print("Enum: {s}\n", .{@tagName(self.payload.tag)});
         if (@intFromEnum(self.tag) < Tag.no_payload_count) {
             return self.tag;
         } else {
@@ -78,6 +79,35 @@ pub const PyObject = extern union {
         }
 
         return null;
+    }
+
+    /// If the method exists, returns a PyObject of the Func.
+    pub fn getInternalMethod(self: PyObject, name: []const u8, ally: Allocator) !?PyObject {
+        const val = self.toTag();
+
+        const member_list = switch (val) {
+            .list => Payload.List.MemberFns,
+            else => std.debug.panic("{s} has no member functions", .{@tagName(val)}),
+        };
+
+        inline for (member_list) |func| {
+            if (std.mem.eql(u8, func[0], name)) {
+                const fn_ptr = func[1];
+                const func_obj = try Tag.create(.zig_function, ally, .{ .name = name, .fn_ptr = fn_ptr });
+                return func_obj;
+            } else {
+                return null;
+            }
+        }
+
+        @panic("internal method not found");
+    }
+
+    /// Asserts self is a Func
+    pub fn callFunc(self: PyObject, vm: *Vm, args: []PyObject) void {
+        std.debug.assert(self.toTag() == .zig_function);
+        const func = self.castTag(.zig_function).?.data.fn_ptr;
+        @call(.auto, func, .{ vm, args });
     }
 
     // Inits
@@ -154,14 +184,14 @@ pub const PyObject = extern union {
 
             .list => {
                 const list = self.castTag(.list).?.data.list.items;
-                try writer.print("(", .{});
+                try writer.print("[", .{});
                 for (list, 0..) |tup, i| {
                     try writer.print("{}", .{tup});
 
                     // Is there a next element
                     if (i < list.len - 1) try writer.print(", ", .{});
                 }
-                try writer.print(")", .{});
+                try writer.print("]", .{});
             },
 
             .zig_function => @panic("cannot print zig_function"),
@@ -199,7 +229,22 @@ pub const Payload = struct {
     pub const List = struct {
         base: Payload,
         data: struct {
-            list: std.ArrayListUnmanaged(PyObject),
+            list: std.ArrayList(PyObject),
         },
+
+        // For Member Functions, args[0] is self.
+        pub const MemberFns = &.{
+            .{ "append", append },
+        };
+
+        fn append(vm: *Vm, args: []PyObject) void {
+            const self = args[0];
+            var data = self.castTag(.list).?.data;
+            std.debug.print("Args: {any}\n", .{args[1..]});
+            data.list.appendSlice(args[1..]) catch @panic("failed to append to slice");
+
+            const none_return = PyObject.Tag.init(.none);
+            vm.stack.append(none_return) catch @panic("failed to return None from list.append()");
+        }
     };
 };

@@ -47,6 +47,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 .RETURN_VALUE => .ReturnValue,
                 .STORE_SUBSCR => .StoreSubScr,
                 .ROT_TWO => .RotTwo,
+                .BINARY_SUBSCR => .BinarySubScr,
                 else => null,
             };
             if (maybe_inst) |inst| {
@@ -60,9 +61,9 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
             .LOAD_CONST => {
                 const index = bytes[cursor + 1];
                 const inst = switch (co.consts[index]) {
-                    .Int => |int| Instruction.loadConst(.{ .Integer = int }),
-                    .None => Instruction.loadNone(),
-                    .String => |string| Instruction.loadConst(.{ .String = string }),
+                    .Int => |int| Instruction{ .LoadConst = .{ .Integer = int } },
+                    .None => Instruction{ .LoadConst = .None },
+                    .String => |string| Instruction{ .LoadConst = .{ .String = string } },
                     .Tuple => |tuple| blk: {
                         var tuple_list = std.ArrayList(Constant).init(compiler.allocator);
                         for (tuple) |tup| {
@@ -73,9 +74,9 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                                 }),
                             }
                         }
-                        break :blk Instruction.loadConst(.{ .Tuple = try tuple_list.toOwnedSlice() });
+                        break :blk Instruction{ .LoadConst = .{ .Tuple = try tuple_list.toOwnedSlice() } };
                     },
-                    .Bool => |boolean| Instruction.loadConst(.{ .Boolean = boolean }),
+                    .Bool => |boolean| Instruction{ .LoadConst = .{ .Boolean = boolean } },
                     else => |panic_op| std.debug.panic("cannot load inst {s}", .{@tagName(panic_op)}),
                 };
                 try instructions.append(inst);
@@ -85,7 +86,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
             .STORE_NAME => {
                 const index = bytes[cursor + 1];
                 const name = co.names[index].String;
-                const inst = Instruction.storeName(name);
+                const inst = Instruction{ .StoreName = name };
                 try instructions.append(inst);
                 cursor += 2;
             },
@@ -93,7 +94,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
             .LOAD_NAME => {
                 const index = bytes[cursor + 1];
                 const name = co.names[index].String;
-                const inst = Instruction.loadName(name);
+                const inst = Instruction{ .LoadName = name };
                 try instructions.append(inst);
                 cursor += 2;
             },
@@ -101,7 +102,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
             .CALL_FUNCTION => {
                 // Number of arguments above this object on the stack.
                 const argc = bytes[cursor + 1];
-                const inst = Instruction.callFunction(argc);
+                const inst = Instruction{ .CallFunction = argc };
                 try instructions.append(inst);
                 cursor += 2;
             },
@@ -111,62 +112,67 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
 
             .POP_JUMP_IF_FALSE => {
                 const target = bytes[cursor + 1];
-                const inst = Instruction.newPopJump(false, target);
+                const inst = Instruction{ .PopJump = .{ .case = false, .target = target } };
                 try instructions.append(inst);
                 cursor += 2;
             },
 
             .POP_JUMP_IF_TRUE => {
                 const target = bytes[cursor + 1];
-                const inst = Instruction.newPopJump(true, target);
+                const inst = Instruction{ .PopJump = .{ .case = true, .target = target } };
                 try instructions.append(inst);
                 cursor += 2;
             },
 
             .COMPARE_OP => {
                 const cmp_op: CompareOp = @enumFromInt(bytes[cursor + 1]);
-                const inst = Instruction{ .CompareOperation = .{ .op = cmp_op } };
+                const inst = Instruction{ .CompareOperation = cmp_op };
                 try instructions.append(inst);
                 cursor += 2;
             },
 
             .INPLACE_ADD => {
-                const inst = Instruction{ .BinaryOperation = .{ .op = .Add } };
+                const inst = Instruction{ .BinaryOperation = .Add };
                 try instructions.append(inst);
                 cursor += 2;
             },
 
             .BUILD_LIST => {
                 const len = bytes[cursor + 1];
-                const inst = Instruction{ .BuildList = .{ .len = len } };
+                const inst = Instruction{ .BuildList = len };
                 try instructions.append(inst);
                 cursor += 2;
             },
 
-            .BINARY_ADD,
-            .BINARY_SUBSCR,
-            => {
+            .BINARY_ADD => {
                 const binOp: BinaryOp = switch (op) {
                     .BINARY_ADD => .Add,
-                    .BINARY_SUBSCR => .Subtract,
                     else => unreachable,
                 };
 
-                const inst = Instruction.newBinOp(binOp);
+                const inst = Instruction{ .BinaryOperation = binOp };
                 try instructions.append(inst);
                 cursor += 2;
             },
 
             .JUMP_FORWARD => {
                 const delta = bytes[cursor + 1];
-                const inst = Instruction{ .JumpForward = .{ .delta = delta } };
+                const inst = Instruction{ .JumpForward = delta };
                 try instructions.append(inst);
                 cursor += 2;
             },
 
             .LOAD_METHOD => {
                 const index = bytes[cursor + 1];
-                const inst = Instruction{ .LoadMethod = .{ .index = index } };
+                const name = co.names[index].String;
+                const inst = Instruction{ .LoadMethod = name };
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
+            .CALL_METHOD => {
+                const argc = bytes[cursor + 1];
+                const inst = Instruction{ .CallMethod = argc };
                 try instructions.append(inst);
                 cursor += 2;
             },
@@ -185,9 +191,9 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
 }
 
 pub const Instruction = union(enum) {
-    LoadName: struct { name: []const u8 },
-    StoreName: struct { name: []const u8 },
-    LoadConst: struct { value: Constant },
+    LoadName: []const u8,
+    StoreName: []const u8,
+    LoadConst: Constant,
 
     PopTop: void,
     Pass: void,
@@ -197,77 +203,24 @@ pub const Instruction = union(enum) {
     // < 90
     StoreSubScr: void,
     RotTwo: void,
+    BinarySubScr: void,
 
     // Jump
     PopJump: struct { case: bool, target: u32 },
-    JumpForward: struct { delta: u32 },
+    JumpForward: u32,
 
-    LoadMethod: struct { index: u32 },
-    CallFunction: struct { arg_count: usize },
+    LoadMethod: []const u8,
+    CallFunction: usize,
+    CallMethod: usize,
 
-    BinaryOperation: struct { op: BinaryOp },
-    UnaryOperation: struct { op: UnaryOp },
-    CompareOperation: struct { op: CompareOp },
+    BinaryOperation: BinaryOp,
+    UnaryOperation: UnaryOp,
+    CompareOperation: CompareOp,
 
     ReturnValue: void,
 
     // These happen at runtime
-    BuildList: struct { len: u32 },
-
-    pub fn loadConst(value: Constant) Instruction {
-        return .{
-            .LoadConst = .{
-                .value = value,
-            },
-        };
-    }
-
-    pub fn loadNone() Instruction {
-        return .{
-            .LoadConst = .{
-                .value = .None,
-            },
-        };
-    }
-
-    pub fn loadName(name: []const u8) Instruction {
-        return .{
-            .LoadName = .{
-                .name = name,
-            },
-        };
-    }
-
-    pub fn storeName(name: []const u8) Instruction {
-        return .{
-            .StoreName = .{
-                .name = name,
-            },
-        };
-    }
-
-    pub fn callFunction(arg_count: usize) Instruction {
-        return .{
-            .CallFunction = .{
-                .arg_count = arg_count,
-            },
-        };
-    }
-
-    pub fn newPopJump(case: bool, target: u32) Instruction {
-        return .{
-            .PopJump = .{
-                .case = case,
-                .target = target,
-            },
-        };
-    }
-
-    pub fn newBinOp(op: BinaryOp) Instruction {
-        return .{ .BinaryOperation = .{
-            .op = op,
-        } };
-    }
+    BuildList: u32,
 
     pub fn format(
         self: Instruction,
@@ -303,14 +256,6 @@ pub const BinaryOp = enum {
     And,
     Xor,
     Or,
-
-    pub fn newBinaryOp(op: BinaryOp) Instruction {
-        return .{
-            .BinaryOperation = .{
-                .op = op,
-            },
-        };
-    }
 };
 
 pub const CompareOp = enum(u8) {
