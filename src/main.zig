@@ -2,6 +2,17 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const Manager = @import("Manager.zig");
+
+const build_options = @import("options");
+
+const tracer = @import("tracer");
+const tracer_backend = build_options.backend;
+pub const tracer_impl = switch (tracer_backend) {
+    .Chrome => tracer.chrome,
+    .Spall => tracer.spall,
+    .None => tracer.none,
+};
+
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const gpa_allocator = gpa.allocator();
 
@@ -31,6 +42,18 @@ pub fn main() !u8 {
 
         arena.deinit();
         _ = gpa.deinit();
+
+        if (tracer_backend != .None) {
+            tracer.deinit();
+            tracer.deinit_thread();
+        }
+    }
+
+    if (tracer_backend != .None) {
+        try std.fs.cwd().makePath("./traces");
+
+        try tracer.init();
+        try tracer.init_thread(try std.fs.cwd().openDir("./traces", .{}));
     }
 
     const args = try std.process.argsAlloc(gpa_allocator);
@@ -83,7 +106,7 @@ pub fn main() !u8 {
         var manager = try Manager.init(arena_allocator);
         defer manager.deinit();
 
-        if (options.is_pyc) try manager.run_pyc(file_path) else @panic("can only run .pyc");
+        if (options.is_pyc) try manager.run_pyc(file_path) else try manager.run_file(file_path);
 
         return 0;
     }

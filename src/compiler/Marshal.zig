@@ -3,6 +3,7 @@
 const std = @import("std");
 const ObjType = @import("objtype.zig").ObjType;
 const CodeObject = @import("CodeObject.zig");
+const tracer = @import("tracer");
 
 const Marshal = @This();
 
@@ -36,6 +37,9 @@ allocator: std.mem.Allocator,
 co: *CodeObject,
 
 pub fn load(allocator: std.mem.Allocator, input_bytes: []const u8) !CodeObject {
+    const t = tracer.trace(@src(), "", .{});
+    defer t.end();
+
     var marshal = try allocator.create(Marshal);
     errdefer allocator.destroy(marshal);
 
@@ -115,6 +119,9 @@ fn read_object(marshal: *Marshal) Result {
         // This causes marshal to free some memory, so we just return to prevent it
         // from access flag_refs again.
         .TYPE_CODE => return marshal.read_codeobject(),
+
+        .TYPE_TRUE => result = .{ .Bool = true },
+        .TYPE_FALSE => result = .{ .Bool = false },
 
         else => std.debug.panic("Unsupported ObjType: {s}\n", .{@tagName(ty)}),
     }
@@ -223,6 +230,7 @@ pub const Result = union(enum) {
             },
             .None => try writer.print("None", .{}),
             .String => |string| try writer.print("{s}", .{string}),
+            .Bool => |boolean| try writer.print("{}", .{boolean}),
             else => std.debug.panic("TODO: Result.format2 {s}", .{@tagName(result)}),
         }
     }

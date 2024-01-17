@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const CodeObject = @import("CodeObject.zig");
+const tracer = @import("tracer");
 
 const OpCodes = @import("opcodes.zig");
 const OpCode = OpCodes.OpCode;
@@ -13,6 +14,9 @@ cursor: u32,
 allocator: std.mem.Allocator,
 
 pub fn init(allocator: std.mem.Allocator) Compiler {
+    const t = tracer.trace(@src(), "", .{});
+    defer t.end();
+
     return .{
         .cursor = 0,
         .allocator = allocator,
@@ -20,6 +24,9 @@ pub fn init(allocator: std.mem.Allocator) Compiler {
 }
 
 pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
+    const t = tracer.trace(@src(), "", .{});
+    defer t.end();
+
     var instructions = std.ArrayList(Instruction).init(compiler.allocator);
 
     log.debug("\n{}", .{co});
@@ -28,8 +35,26 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
 
     var cursor: u32 = 0;
     while (cursor < bytes.len) {
-        const op: OpCode = @enumFromInt(bytes[cursor]);
+        const byte = bytes[cursor];
+        const op: OpCode = @enumFromInt(byte);
         log.debug("Op: {s}", .{@tagName(op)});
+
+        const has_arg = byte > 90;
+
+        if (!has_arg) {
+            const maybe_inst: ?Instruction = switch (op) {
+                .POP_TOP => .PopTop,
+                .RETURN_VALUE => .ReturnValue,
+                .STORE_SUBSCR => .StoreSubScr,
+                .ROT_TWO => .RotTwo,
+                else => null,
+            };
+            if (maybe_inst) |inst| {
+                try instructions.append(inst);
+                cursor += 2;
+                continue;
+            }
+        }
 
         switch (op) {
             .LOAD_CONST => {
@@ -50,6 +75,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                         }
                         break :blk Instruction.loadConst(.{ .Tuple = try tuple_list.toOwnedSlice() });
                     },
+                    .Bool => |boolean| Instruction.loadConst(.{ .Boolean = boolean }),
                     else => |panic_op| std.debug.panic("cannot load inst {s}", .{@tagName(panic_op)}),
                 };
                 try instructions.append(inst);
@@ -76,18 +102,6 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 // Number of arguments above this object on the stack.
                 const argc = bytes[cursor + 1];
                 const inst = Instruction.callFunction(argc);
-                try instructions.append(inst);
-                cursor += 2;
-            },
-
-            .POP_TOP => {
-                const inst = Instruction.Pop;
-                try instructions.append(inst);
-                cursor += 2;
-            },
-
-            .RETURN_VALUE => {
-                const inst = Instruction.ReturnValue;
                 try instructions.append(inst);
                 cursor += 2;
             },
@@ -129,20 +143,16 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 cursor += 2;
             },
 
-            .STORE_SUBSCR => {
-                const inst = Instruction.StoreSubScr;
-                try instructions.append(inst);
-                cursor += 2;
-            },
+            .BINARY_ADD,
+            .BINARY_SUBSCR,
+            => {
+                const binOp: BinaryOp = switch (op) {
+                    .BINARY_ADD => .Add,
+                    .BINARY_SUBSCR => .Subtract,
+                    else => unreachable,
+                };
 
-            .ROT_TWO => {
-                const inst = Instruction.RotTwo;
-                try instructions.append(inst);
-                cursor += 2;
-            },
-
-            .BINARY_ADD => {
-                const inst = Instruction.newBinOp(.Add);
+                const inst = Instruction.newBinOp(binOp);
                 try instructions.append(inst);
                 cursor += 2;
             },
@@ -150,6 +160,13 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
             .JUMP_FORWARD => {
                 const delta = bytes[cursor + 1];
                 const inst = Instruction{ .JumpForward = .{ .delta = delta } };
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
+            .LOAD_METHOD => {
+                const index = bytes[cursor + 1];
+                const inst = Instruction{ .LoadMethod = .{ .index = index } };
                 try instructions.append(inst);
                 cursor += 2;
             },
@@ -172,7 +189,7 @@ pub const Instruction = union(enum) {
     StoreName: struct { name: []const u8 },
     LoadConst: struct { value: Constant },
 
-    Pop: void,
+    PopTop: void,
     Pass: void,
     Continue: void,
     Break: void,
@@ -182,9 +199,10 @@ pub const Instruction = union(enum) {
     RotTwo: void,
 
     // Jump
-    popJump: struct { case: bool, target: u32 },
+    PopJump: struct { case: bool, target: u32 },
     JumpForward: struct { delta: u32 },
 
+    LoadMethod: struct { index: u32 },
     CallFunction: struct { arg_count: usize },
 
     BinaryOperation: struct { op: BinaryOp },
@@ -238,7 +256,7 @@ pub const Instruction = union(enum) {
 
     pub fn newPopJump(case: bool, target: u32) Instruction {
         return .{
-            .popJump = .{
+            .PopJump = .{
                 .case = case,
                 .target = target,
             },
@@ -267,6 +285,7 @@ pub const Constant = union(enum) {
     String: []const u8,
     Integer: i32,
     Tuple: []const Constant,
+    Boolean: bool,
     None: void,
 };
 

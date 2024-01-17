@@ -1,8 +1,11 @@
 .{
     .name = "osmium",
-    .version = "0.0.0",
-
-    .dependencies = .{},
-
+    .version = "0.1.0",
     .paths = .{""},
+    .dependencies = .{
+        .tracer = .{
+            .url = "https://github.com/Rexicon226/zig-tracer/archive/cfe8e56886301281293f330c3127956b4b8e3e75.tar.gz",
+            .hash = "1220799912e50ca892a63d8cf79b74728efba4e4f10177193dde9fa1ac3c134d2e6b",
+        },
+    },
 }

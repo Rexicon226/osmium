@@ -3,8 +3,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const tracer = @import("tracer");
 const CodeObject = @import("../compiler/CodeObject.zig");
 const Instruction = @import("../compiler/Compiler.zig").Instruction;
+
+const PyObject = @import("object.zig").PyObject;
+const PyTag = PyObject.Tag;
 
 const Vm = @This();
 
@@ -12,8 +16,8 @@ const builtins = @import("../builtins.zig");
 
 const log = std.log.scoped(.vm);
 
-stack: std.ArrayList(ScopeObject),
-scope: std.StringHashMap(ScopeObject),
+stack: std.ArrayList(PyObject),
+scope: std.StringHashMap(PyObject),
 program_counter: usize,
 
 allocator: Allocator,
@@ -21,6 +25,9 @@ allocator: Allocator,
 is_running: bool,
 
 pub fn init() !Vm {
+    const t = tracer.trace(@src(), "", .{});
+    defer t.end();
+
     return .{
         .stack = undefined,
         .scope = undefined,
@@ -32,6 +39,9 @@ pub fn init() !Vm {
 
 /// Creates an Arena around `alloc` and runs the instructions.
 pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
+    const t = tracer.trace(@src(), "", .{});
+    defer t.end();
+
     // Setup
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
@@ -40,8 +50,8 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
 
     vm.allocator = allocator;
 
-    vm.stack = std.ArrayList(ScopeObject).init(allocator);
-    vm.scope = std.StringHashMap(ScopeObject).init(allocator);
+    vm.stack = std.ArrayList(PyObject).init(allocator);
+    vm.scope = std.StringHashMap(PyObject).init(allocator);
 
     // Run
     vm.is_running = true;
@@ -49,7 +59,11 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
     // Add the builtins to the scope.
     inline for (builtins.builtin_fns) |builtin_fn| {
         const name, const ref = builtin_fn;
-        try vm.scope.put(name, .{ .zig_function = ref });
+        const obj = try PyTag.zig_function.create(vm.allocator, .{
+            .name = name,
+            .fn_ptr = ref,
+        });
+        try vm.scope.put(name, obj);
     }
 
     while (vm.is_running) {
@@ -68,32 +82,39 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
 }
 
 fn exec(vm: *Vm, inst: Instruction) !void {
+    const t = tracer.trace(@src(), "{s}", .{@tagName(inst)});
+    defer t.end();
+
     switch (inst) {
         .LoadConst => |load_const| {
             switch (load_const.value) {
                 .Integer => |int| {
-                    const obj = ScopeObject.newVal(int);
+                    const obj = try PyObject.initInt(vm.allocator, int);
                     try vm.stack.append(obj);
                 },
                 .String => |string| {
-                    const obj = ScopeObject.newString(string);
+                    const obj = try PyObject.initString(vm.allocator, string);
                     try vm.stack.append(obj);
                 },
                 .Tuple => |tuple| {
-                    var scope_list = std.ArrayList(ScopeObject).init(vm.allocator);
-                    for (tuple) |tup| {
+                    var scope_list = try vm.allocator.alloc(PyObject, tuple.len);
+                    for (tuple, 0..) |tup, i| {
                         switch (tup) {
-                            .Integer => |int| try scope_list.append(ScopeObject.newVal(int)),
+                            .Integer => |int| scope_list[i] = try PyObject.initInt(vm.allocator, int),
                             else => std.debug.panic("cannot vm tuple that contains type: {s}", .{
                                 @tagName(tup),
                             }),
                         }
                     }
-                    const obj = ScopeObject.newTuple(try scope_list.toOwnedSlice());
+                    const obj = try PyObject.initTuple(vm.allocator, scope_list);
+                    try vm.stack.append(obj);
+                },
+                .Boolean => |boolean| {
+                    const obj = try PyObject.initBoolean(vm.allocator, boolean);
                     try vm.stack.append(obj);
                 },
                 .None => {
-                    const obj = ScopeObject.newNone();
+                    const obj = PyTag.init(.none);
                     try vm.stack.append(obj);
                 },
             }
@@ -106,7 +127,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             if (scope_ref) |ref| {
                 try vm.stack.append(ref);
             } else {
-                std.debug.panic("loadName {s} not found in the scope", .{load_name.name});
+                std.debug.panic("LoadName {s} not found in the scope", .{load_name.name});
             }
         },
 
@@ -115,7 +136,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             try vm.scope.put(store_name.name, ref);
         },
 
-        .Pop => {
+        .PopTop => {
             if (vm.stack.items.len == 0) {
                 @panic("stack underflow");
             }
@@ -130,7 +151,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         },
 
         .CallFunction => |call_function| {
-            var args = try vm.allocator.alloc(ScopeObject, call_function.arg_count);
+            var args = try vm.allocator.alloc(PyObject, call_function.arg_count);
             defer vm.allocator.free(args);
 
             // Arguments are pushed in reverse order.
@@ -141,12 +162,12 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             const function = vm.stack.pop();
 
             // Only builtins supported.
-            if (function == .zig_function) {
-                const ref = function.zig_function;
+            if (function.toTag() == .zig_function) {
+                const payload = function.castTag(.zig_function).?.data;
 
-                @call(.auto, ref, .{ vm, args });
+                @call(.auto, payload.fn_ptr, .{ vm, args });
             } else {
-                std.debug.panic("callFunction ref is not zig_function, found: {s}", .{@tagName(function)});
+                std.debug.panic("callFunction ref is not zig_function, found: {s}", .{@tagName(function.toTag())});
             }
 
             // NOTE: builtin functions are expected to handle their own args.
@@ -156,8 +177,14 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             const lhs_obj = vm.stack.pop();
             const rhs_obj = vm.stack.pop();
 
-            const lhs = lhs_obj.value;
-            const rhs = rhs_obj.value;
+            if (lhs_obj.toTag() != .int) @panic("BinOp lhs not int");
+            if (rhs_obj.toTag() != .int) @panic("BinOp rhs not int");
+
+            const lhs_payload = lhs_obj.castTag(.int).?.data;
+            const rhs_payload = lhs_obj.castTag(.int).?.data;
+
+            const lhs = lhs_payload.int;
+            const rhs = rhs_payload.int;
 
             const result = switch (bin_op.op) {
                 .Add => lhs + rhs,
@@ -178,7 +205,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                 else => std.debug.panic("TODO: BinaryOperator {s}", .{@tagName(bin_op.op)}),
             };
 
-            try vm.stack.append(ScopeObject.newVal(result));
+            const new_obj = try PyObject.initInt(vm.allocator, result);
+            try vm.stack.append(new_obj);
         },
 
         .CompareOperation => |comp_op| {
@@ -186,9 +214,14 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             const rhs_obj = vm.stack.pop();
             const lhs_obj = vm.stack.pop();
 
-            const lhs = lhs_obj.value;
-            const rhs = rhs_obj.value;
+            if (lhs_obj.toTag() != .int) @panic("BinOp lhs not int");
+            if (rhs_obj.toTag() != .int) @panic("BinOp rhs not int");
 
+            const lhs_payload = lhs_obj.castTag(.int).?.data;
+            const rhs_payload = lhs_obj.castTag(.int).?.data;
+
+            const lhs = lhs_payload.int;
+            const rhs = rhs_payload.int;
             log.debug("CompareOp: {s}", .{@tagName(comp_op.op)});
             log.debug("LHS: {}, RHS: {}", .{ lhs, rhs });
 
@@ -201,23 +234,25 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                 .GreaterEqual => lhs >= rhs,
             };
 
-            try vm.stack.append(ScopeObject.newBoolean(result));
+            try vm.stack.append(try PyObject.initBoolean(vm.allocator, result));
         },
 
         // I read this wrong the first time.
         // Note to self, pop-jump. Pop, and jump if case.
-        .popJump => |pop_jump| {
+        .PopJump => |pop_jump| {
             const ctm = pop_jump.case;
 
             const tos = vm.stack.pop();
 
-            if (tos != .boolean) {
-                std.debug.panic("popJump condition is not boolean, found: {s}", .{@tagName(tos)});
+            if (tos.toTag() != .boolean) {
+                std.debug.panic("popJump condition is not boolean, found: {s}", .{@tagName(tos.toTag())});
             }
 
-            log.debug("TOS was: {}", .{tos.boolean});
+            const boolean = tos.castTag(.boolean).?.data.boolean;
 
-            if (tos.boolean == ctm) {
+            log.debug("TOS was: {}", .{boolean});
+
+            if (boolean == ctm) {
                 vm.jump(pop_jump.target);
             }
         },
@@ -225,23 +260,14 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .BuildList => |build_list| {
             const len = build_list.len;
 
-            var list = std.ArrayList(ScopeObject).init(vm.allocator);
-            try list.ensureTotalCapacity(len);
-
-            // TODO: bruh, what is this lmao.
-
-            try list.append(.none);
-
+            var list = try vm.allocator.alloc(PyObject, len);
             // Popped in reverse order.
             for (0..len) |i| {
-                try list.append(.none);
                 const index = len - i - 1;
-                list.items[index] = vm.stack.pop();
+                list[index] = vm.stack.pop();
             }
 
-            _ = list.pop();
-
-            const obj = ScopeObject{ .list = list };
+            const obj = try PyTag.list.create(vm.allocator, .{ .list = std.ArrayListUnmanaged(PyObject).fromOwnedSlice(list) });
             try vm.stack.append(obj);
         },
 
@@ -251,14 +277,18 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             const array = vm.stack.pop();
             const value = vm.stack.pop();
 
-            switch (array) {
-                .list => |list| {
-                    if (index != .value) @panic("index value must be a value");
-                    if (index.value < 0) @panic("index value less than 0");
+            switch (array.toTag()) {
+                .list => {
+                    const list = array.castTag(.list).?.data.list.items;
 
-                    list.items[@intCast(index.value)] = value;
+                    if (index.toTag() != .int) @panic("index value must be a int");
+
+                    const access_index = index.castTag(.int).?.data.int;
+                    if (access_index < 0) @panic("index value less than 0");
+
+                    list[@intCast(access_index)] = value;
                 },
-                else => std.debug.panic("only list can do index assignment, found: {s}", .{@tagName(array)}),
+                else => std.debug.panic("only list can do index assignment, found: {s}", .{@tagName(array.toTag())}),
             }
         },
 
@@ -273,6 +303,12 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             vm.program_counter += jump_forward.delta;
         },
 
+        // .LoadMethod => |load_method| {
+        //     const index = load_method.index;
+        //     _ = index; // autofix
+
+        // },
+
         else => std.debug.panic("TODO: exec {s}", .{@tagName(inst)}),
     }
 }
@@ -281,85 +317,3 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 fn jump(vm: *Vm, target: u32) void {
     vm.program_counter = target;
 }
-
-const Label = usize;
-
-pub const ScopeObject = union(enum) {
-    value: i32,
-    string: []const u8,
-    boolean: bool,
-    none: void,
-
-    tuple: []const ScopeObject,
-    list: std.ArrayList(ScopeObject),
-
-    // Arguments can have any meaning, depending on what the function does.
-    zig_function: *const fn (*Vm, []ScopeObject) void,
-
-    pub fn newVal(value: i32) ScopeObject {
-        return .{
-            .value = value,
-        };
-    }
-
-    pub fn newNone() ScopeObject {
-        return .{
-            .none = {},
-        };
-    }
-
-    pub fn newString(string: []const u8) ScopeObject {
-        return .{
-            .string = string,
-        };
-    }
-
-    pub fn newBoolean(boolean: bool) ScopeObject {
-        return .{
-            .boolean = boolean,
-        };
-    }
-
-    pub fn newTuple(tuple: []const ScopeObject) ScopeObject {
-        return .{
-            .tuple = tuple,
-        };
-    }
-
-    pub fn format(
-        self: ScopeObject,
-        comptime fmt: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        std.debug.assert(fmt.len == 0);
-
-        switch (self) {
-            .value => |val| try writer.print("{d}", .{val}),
-            .string => |string| try writer.print("'{s}'", .{string}),
-            .boolean => |boolean| try writer.print("{}", .{boolean}),
-            .none => try writer.print("None", .{}),
-            .tuple => |tuple| {
-                try writer.print("(", .{});
-                for (tuple, 0..) |tup, i| {
-                    try writer.print("{}", .{tup});
-
-                    // Is there a next element
-                    if (i < tuple.len - 1) try writer.print(", ", .{});
-                }
-                try writer.print(")", .{});
-            },
-            .list => |list| {
-                try writer.print("[", .{});
-                for (list.items, 0..) |tup, i| {
-                    try writer.print("{}", .{tup});
-
-                    // Is there a next element
-                    if (i < list.items.len - 1) try writer.print(", ", .{});
-                }
-                try writer.print("]", .{});
-            },
-            .zig_function => @panic("cannot print zig_function"),
-        }
-    }
-};

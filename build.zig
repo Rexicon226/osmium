@@ -1,5 +1,9 @@
 const std = @import("std");
 
+var trace: ?bool = false;
+var @"enable-bench": ?bool = false;
+var backend: TraceBackend = .None;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -17,6 +21,29 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.root_module.addImport("std-extras", std_extras);
+
+    trace = b.option(bool, "trace",
+        \\Enables tracing of the compiler using the default backend (spall)
+    );
+
+    if (trace) |_| {
+        backend = b.option(TraceBackend, "trace-backend",
+            \\Switch between what backend to use. None is default.
+        ) orelse backend;
+    }
+
+    const exe_options = b.addOptions();
+
+    exe_options.addOption(bool, "trace", trace orelse false);
+    exe_options.addOption(TraceBackend, "backend", backend);
+
+    exe_options.addOption(usize, "src_file_trimlen", std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?.len);
+
+    exe.root_module.addOptions("options", exe_options);
+
+    const tracer_dep = b.dependency("tracer", .{});
+    exe.root_module.addImport("tracer", tracer_dep.module("tracer"));
+    exe.linkLibC(); // Needs libc.
 
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);
@@ -43,6 +70,12 @@ pub fn build(b: *std.Build) void {
     const opcode_step = b.step("opcode", "Generate opcodes");
     generateOpCode(b, opcode_step, target);
 }
+
+const TraceBackend = enum {
+    Spall,
+    Chrome,
+    None,
+};
 
 fn generateOpCode(
     b: *std.Build,
