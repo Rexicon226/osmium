@@ -43,7 +43,7 @@ pub fn build(b: *std.Build) void {
 
     const tracer_dep = b.dependency("tracer", .{});
     exe.root_module.addImport("tracer", tracer_dep.module("tracer"));
-    exe.linkLibC(); // Needs libc.
+    // exe.linkLibC(); // Needs libc.
 
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);

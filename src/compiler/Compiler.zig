@@ -69,7 +69,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                         .LoadConst = .{ .String = string },
                     },
                     .Tuple => |tuple| blk: {
-                        var tuple_list = std.ArrayList(Constant).init(
+                        var tuple_list = std.ArrayList(Instruction.Constant).init(
                             compiler.allocator,
                         );
                         for (tuple) |tup| {
@@ -149,7 +149,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
             },
 
             .COMPARE_OP => {
-                const cmp_op: CompareOp = @enumFromInt(bytes[cursor + 1]);
+                const cmp_op: Instruction.CompareOp = @enumFromInt(bytes[cursor + 1]);
                 const inst = Instruction{ .CompareOperation = cmp_op };
                 try instructions.append(inst);
                 cursor += 2;
@@ -169,7 +169,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
             },
 
             .BINARY_ADD => {
-                const binOp: BinaryOp = switch (op) {
+                const binOp: Instruction.BinaryOp = switch (op) {
                     .BINARY_ADD => .Add,
                     else => unreachable,
                 };
@@ -246,6 +246,44 @@ pub const Instruction = union(enum) {
     // These happen at runtime
     BuildList: u32,
 
+    pub const Constant = union(enum) {
+        String: []const u8,
+        Integer: i32,
+        Tuple: []const Constant,
+        Boolean: bool,
+        None: void,
+    };
+
+    pub const BinaryOp = enum {
+        Power,
+        Multiply,
+        MatrixMultiply,
+        Divide,
+        FloorDivide,
+        Modulo,
+        Add,
+        Subtract,
+        Lshift,
+        Rshift,
+        And,
+        Xor,
+        Or,
+    };
+
+    pub const CompareOp = enum(u8) {
+        Less = 0,
+        LessEqual = 1,
+        Equal = 2,
+        NotEqual = 3,
+        Greater = 4,
+        GreaterEqual = 5,
+    };
+
+    pub const UnaryOp = enum {
+        Not,
+        Minus,
+    };
+
     pub fn format(
         self: Instruction,
         comptime fmt: []const u8,
@@ -256,42 +294,4 @@ pub const Instruction = union(enum) {
 
         try writer.print("{s}", .{@tagName(self)});
     }
-};
-
-pub const Constant = union(enum) {
-    String: []const u8,
-    Integer: i32,
-    Tuple: []const Constant,
-    Boolean: bool,
-    None: void,
-};
-
-pub const BinaryOp = enum {
-    Power,
-    Multiply,
-    MatrixMultiply,
-    Divide,
-    FloorDivide,
-    Modulo,
-    Add,
-    Subtract,
-    Lshift,
-    Rshift,
-    And,
-    Xor,
-    Or,
-};
-
-pub const CompareOp = enum(u8) {
-    Less = 0,
-    LessEqual = 1,
-    Equal = 2,
-    NotEqual = 3,
-    Greater = 4,
-    GreaterEqual = 5,
-};
-
-pub const UnaryOp = enum {
-    Not,
-    Minus,
 };
