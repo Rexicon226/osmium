@@ -246,6 +246,7 @@ pub const Instruction = union(enum) {
     // These happen at runtime
     BuildList: u32,
 
+    // Types
     pub const Constant = union(enum) {
         String: []const u8,
         Integer: i32,

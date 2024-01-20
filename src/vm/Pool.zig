@@ -61,6 +61,8 @@ pub const Key = union(enum) {
     int_type: Int,
     string_type: String,
 
+    none_type: void,
+
     pub const Int = struct {
         value: BigIntManaged,
     };
@@ -85,6 +87,7 @@ pub const Key = union(enum) {
                 const bytes = pool.strings.items[string.start .. string.start + string.length];
                 return Hash.hash(seed, bytes);
             },
+            .none_type => return Hash.hash(seed, &.{0x00}),
         }
     }
 
@@ -108,6 +111,7 @@ pub const Key = union(enum) {
                 if (a_info.start == b_info.start and a_info.length == b_info.length) return true;
                 return false;
             },
+            .none_type => unreachable,
         }
     }
 };
@@ -116,7 +120,6 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
     const adapter: KeyAdapter = .{ .pool = pool };
 
     const gop = try pool.map.getOrPutAdapted(ally, key, adapter);
-    log.debug("Gop: {}\n", .{gop.found_existing});
 
     if (gop.found_existing) return @enumFromInt(gop.index);
     try pool.items.ensureUnusedCapacity(ally, 1);
@@ -141,6 +144,7 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
                 .data = @intCast(index),
             });
         },
+        .none_type => return @enumFromInt(0),
     }
     return @enumFromInt(pool.items.len - 1);
 }
@@ -164,9 +168,7 @@ pub fn indexToKey(pool: *const Pool, index: Index) Key {
 
     switch (item.tag) {
         .int => return pool.decls.get(data),
-        .string => {
-            return pool.decls.get(data);
-        },
+        .string => return pool.decls.get(data),
     }
     unreachable;
 }

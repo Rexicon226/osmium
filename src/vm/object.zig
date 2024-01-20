@@ -14,8 +14,6 @@ const Allocator = std.mem.Allocator;
 
 const log = std.log.scoped(.object);
 
-// This should be the only Index that has primative types.
-// everything else should use *PyObject
 pub const Value = struct {
     ip_index: Index,
 
@@ -24,18 +22,30 @@ pub const Value = struct {
     },
 
     pub const Tag = enum(usize) {
+        const first_payload = @intFromEnum(Tag.none) + 1;
+
+        // Note: this is the literal None type. Not "none"
+        /// `none` has no data
+        none,
+
         int,
         string,
 
         pub fn Type(comptime t: Tag) type {
+            assert(@intFromEnum(t) >= Tag.first_payload);
+
             return switch (t) {
                 .int,
                 .string,
                 => Payload.Value,
+
+                .none => @compileError("Tag " ++ @tagName(t) ++ "has no payload"),
             };
         }
 
         pub fn create(comptime t: Tag, ally: Allocator, data: Data(t)) error{OutOfMemory}!Value {
+            assert(@intFromEnum(t) >= Tag.first_payload);
+
             const ptr = try ally.create(t.Type());
             ptr.* = .{
                 .base = .{ .tag = t },
@@ -45,7 +55,13 @@ pub const Value = struct {
         }
 
         pub fn Data(comptime t: Tag) type {
+            assert(@intFromEnum(t) >= Tag.first_payload);
+
             return std.meta.fieldInfo(t.Type(), .data).type;
+        }
+
+        pub fn init(comptime t: Tag) Value {
+            assert(@intFromEnum(t) < Tag.first_payload);
         }
     };
 
@@ -72,6 +88,9 @@ pub const Value = struct {
 
     /// Modified version of `create` that wraps the process of adding the bytes to `pool.strings`
     pub fn createString(bytes: []const u8, vm: *Vm) error{OutOfMemory}!Value {
+        // TODO: When looking up interned names, this will create duplcate entries to pool.strings.
+        // we can probably do some sort of signature identify for the string, to see if it's already on it.
+
         const start = vm.pool.strings.items.len;
         const len = bytes.len;
 
@@ -86,9 +105,11 @@ pub const Value = struct {
 
     // Interns the `Value` onto the Pool. Returns that index on the pool.
     pub fn intern(value: *Value, vm: *Vm) Allocator.Error!Index {
+        // Already interned.
         if (value.ip_index != .none) return value.ip_index;
 
-        switch (value.tag()) {
+        const t = value.tag();
+        switch (t) {
             .int => {
                 const pl = value.castTag(.int).?.data;
                 return vm.pool.get(vm.allocator, .{ .int_type = .{ .value = pl.int } });
@@ -100,6 +121,10 @@ pub const Value = struct {
                     .length = pl.string.length,
                 } });
             },
+
+            // Can't intern none, it's an immediate value.
+            // We reserve the pool index 0 for None.
+            .none => unreachable,
         }
     }
 

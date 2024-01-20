@@ -27,7 +27,8 @@ const log = std.log.scoped(.vm);
 /// we can intern the PyObject to reduce memory usage and prevent over writes.
 stack: std.ArrayListUnmanaged(Index) = .{},
 /// Same thing as the stack, expect that this is for the scope.
-scope: std.ArrayListUnmanaged(Index) = .{},
+/// It also relates a Index string (name) to an Index (payload)
+scope: std.AutoArrayHashMapUnmanaged(Index, Index) = .{},
 
 /// This is the main scope pool. I think it's better to have all values live by default
 /// on the Pool, before being taken in to the stack. This will allow us to avoid copying
@@ -60,12 +61,14 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
     defer t.end();
 
     vm.is_running = true;
+
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
-
     const allocator = arena.allocator();
-
     vm.allocator = allocator;
+
+    // Reserve the pool index 0 for None
+    _ = try vm.pool.get(vm.allocator, .{ .none_type = {} });
 
     while (vm.is_running) {
         const instruction = instructions[vm.program_counter];
@@ -83,6 +86,9 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
         vm.program_counter += 1;
         try vm.exec(instruction);
     }
+
+    const val = vm.pool.strings.items;
+    log.debug("Strings: {s}", .{val});
 }
 
 fn exec(vm: *Vm, i: Instruction) !void {
@@ -92,6 +98,7 @@ fn exec(vm: *Vm, i: Instruction) !void {
     switch (i) {
         .LoadConst => |constant| try vm.execLoadConst(constant),
         .StoreName => |name| try vm.execStoreName(name),
+        .ReturnValue => try vm.execReturnValue(),
 
         else => std.debug.panic("TODO: exec {s}", .{@tagName(i)}),
     }
@@ -113,6 +120,7 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
             // Put it on the stack.
             try vm.stack.append(vm.allocator, index);
         },
+        .None => {},
         else => std.debug.panic("TODO: execLoadConst: {s}", .{@tagName(load_const)}),
     };
 }
@@ -123,13 +131,22 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
 /// The idea is that when the next variable comes along and interns its name
 /// it will find the entry on the pool, and pull it out. Then run indexToKey on that.
 fn execStoreName(vm: *Vm, name: []const u8) !void {
+    // TODO: Potential problem I see here is the string interning failing for some reason.
+    // this will make the scope fail to find the relative entry, which could cause problems.
+    // maybe some sort of fallback?
+
     // Create a Value for the string.
     var val = try Value.createString(name, vm);
     const index = try val.intern(vm);
-    try vm.scope.append(vm.allocator, index);
+
+    // Pop the stack to get the payload.
+    const payload_index = vm.stack.pop();
+
+    // Add it to the scope.
+    try vm.scope.put(vm.allocator, index, payload_index);
 }
 
-// Jump Logic
-fn jump(vm: *Vm, target: u32) void {
-    vm.program_counter = target;
+fn execReturnValue(vm: *Vm) !void {
+    // Just stop the vm.
+    vm.is_running = false;
 }
