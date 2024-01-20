@@ -1,3 +1,2 @@
-a = [0, 1]
-a.append(2)
+a = 1
 print(a)

@@ -16,8 +16,8 @@ const builtins = @import("../builtins.zig");
 
 const log = std.log.scoped(.vm);
 
-stack: std.ArrayList(PyObject),
-scope: std.StringHashMap(PyObject),
+stack: std.ArrayList(*PyObject),
+scope: std.StringHashMap(*PyObject),
 program_counter: usize,
 
 allocator: Allocator,
@@ -50,8 +50,11 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
 
     vm.allocator = allocator;
 
-    vm.stack = std.ArrayList(PyObject).init(allocator);
-    vm.scope = std.StringHashMap(PyObject).init(allocator);
+    // These are both *PyObject to ensure that the values are stored
+    // between them. In the future I would like the explore using an
+    // InternPool for the scope and an ArrayList(*PyObject) for the stack.
+    vm.stack = std.ArrayList(*PyObject).init(allocator);
+    vm.scope = std.StringHashMap(*PyObject).init(allocator);
 
     // Run
     vm.is_running = true;
@@ -60,7 +63,7 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
     inline for (builtins.builtin_fns) |builtin_fn| {
         const name, const ref = builtin_fn;
         const obj = try PyTag.zig_function.create(vm.allocator, .{
-            .name = name,
+            .name = try PyObject.initString(vm.allocator, name),
             .fn_ptr = ref,
         });
         try vm.scope.put(name, obj);
@@ -68,13 +71,16 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
 
     while (vm.is_running) {
         const instruction = instructions[vm.program_counter];
-        log.debug("Executing Instruction: {} (stacksize={}, pc={}/{}, mem={s})", .{
-            instruction,
-            vm.stack.items.len,
-            vm.program_counter,
-            instructions.len,
-            std.fmt.fmtIntSizeDec(arena.state.end_index),
-        });
+        log.debug(
+            "Executing Instruction: {} (stacksize={}, pc={}/{}, mem={s})",
+            .{
+                instruction,
+                vm.stack.items.len,
+                vm.program_counter,
+                instructions.len,
+                std.fmt.fmtIntSizeDec(arena.state.end_index),
+            },
+        );
 
         vm.program_counter += 1;
         try vm.exec(instruction);
@@ -90,6 +96,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             switch (load_const) {
                 .Integer => |int| {
                     const obj = try PyObject.initInt(vm.allocator, int);
+                    std.debug.print("Obj: {s}\n", .{@tagName(obj.payload.tag)});
                     try vm.stack.append(obj);
                 },
                 .String => |string| {
@@ -97,24 +104,42 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                     try vm.stack.append(obj);
                 },
                 .Tuple => |tuple| {
-                    var scope_list = try vm.allocator.alloc(PyObject, tuple.len);
+                    var scope_list = try vm.allocator.alloc(
+                        PyObject,
+                        tuple.len,
+                    );
                     for (tuple, 0..) |tup, i| {
                         switch (tup) {
-                            .Integer => |int| scope_list[i] = try PyObject.initInt(vm.allocator, int),
-                            else => std.debug.panic("cannot vm tuple that contains type: {s}", .{
-                                @tagName(tup),
-                            }),
+                            .Integer => |int| {
+                                const val = try PyObject.initInt(
+                                    vm.allocator,
+                                    int,
+                                );
+                                scope_list[i] = val.*;
+                            },
+                            else => std.debug.panic(
+                                "cannot vm tuple that contains type: {s}",
+                                .{
+                                    @tagName(tup),
+                                },
+                            ),
                         }
                     }
-                    const obj = try PyObject.initTuple(vm.allocator, scope_list);
+                    const obj = try PyObject.initTuple(
+                        vm.allocator,
+                        scope_list,
+                    );
                     try vm.stack.append(obj);
                 },
                 .Boolean => |boolean| {
-                    const obj = try PyObject.initBoolean(vm.allocator, boolean);
+                    const obj = try PyObject.initBoolean(
+                        vm.allocator,
+                        boolean,
+                    );
                     try vm.stack.append(obj);
                 },
                 .None => {
-                    const obj = PyTag.init(.none);
+                    const obj = try PyTag.init(.none, vm.allocator);
                     try vm.stack.append(obj);
                 },
             }
@@ -127,7 +152,10 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             if (scope_ref) |ref| {
                 try vm.stack.append(ref);
             } else {
-                std.debug.panic("LoadName {s} not found in the scope", .{load_name});
+                std.debug.panic(
+                    "LoadName {s} not found in the scope",
+                    .{load_name},
+                );
             }
         },
 
@@ -151,25 +179,17 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         },
 
         .CallFunction => |argc| {
-            var args = try vm.allocator.alloc(PyObject, argc);
+            var args = try vm.allocator.alloc(*PyObject, argc);
 
             // Arguments are pushed in reverse order.
             for (0..args.len) |i| {
                 args[args.len - i - 1] = vm.stack.pop();
             }
 
+            std.debug.print("Args: {any}\n", .{args});
+
             const function = vm.stack.pop();
-
-            // Only builtins supported.
-            if (function.toTag() == .zig_function) {
-                const payload = function.castTag(.zig_function).?.data;
-
-                @call(.auto, payload.fn_ptr, .{ vm, args });
-            } else {
-                std.debug.panic("callFunction ref is not zig_function, found: {s}", .{@tagName(function.toTag())});
-            }
-
-            // NOTE: builtin functions are expected to handle their own args.
+            function.callFunc(vm, args);
         },
 
         .BinaryOperation => |bin_op| {
@@ -192,16 +212,23 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                 .Divide => @divTrunc(lhs, rhs),
                 .Power => std.math.pow(i32, lhs, rhs),
                 .Lshift => blk: {
-                    if (rhs > std.math.maxInt(u5)) @panic("Lshift with rhs greater than max(u5)");
+                    if (rhs > std.math.maxInt(u5)) {
+                        @panic("Lshift with rhs greater than max(u5)");
+                    }
 
                     break :blk lhs << @as(u5, @intCast(rhs));
                 },
                 .Rshift => blk: {
-                    if (rhs > std.math.maxInt(u5)) @panic("Rshift with rhs greater than max(u5)");
+                    if (rhs > std.math.maxInt(u5)) {
+                        @panic("Rshift with rhs greater than max(u5)");
+                    }
 
                     break :blk lhs >> @as(u5, @intCast(rhs));
                 },
-                else => std.debug.panic("TODO: BinaryOperator {s}", .{@tagName(bin_op)}),
+                else => std.debug.panic(
+                    "TODO: BinaryOperator {s}",
+                    .{@tagName(bin_op)},
+                ),
             };
 
             const new_obj = try PyObject.initInt(vm.allocator, result);
@@ -221,6 +248,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 
             const lhs = lhs_payload.int;
             const rhs = rhs_payload.int;
+
             log.debug("CompareOp: {s}", .{@tagName(comp_op)});
             log.debug("LHS: {}, RHS: {}", .{ lhs, rhs });
 
@@ -233,7 +261,9 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                 .GreaterEqual => lhs >= rhs,
             };
 
-            try vm.stack.append(try PyObject.initBoolean(vm.allocator, result));
+            try vm.stack.append(
+                try PyObject.initBoolean(vm.allocator, result),
+            );
         },
 
         // I read this wrong the first time.
@@ -244,7 +274,10 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             const tos = vm.stack.pop();
 
             if (tos.toTag() != .boolean) {
-                std.debug.panic("popJump condition is not boolean, found: {s}", .{@tagName(tos.toTag())});
+                std.debug.panic(
+                    "popJump condition is not boolean, found: {s}",
+                    .{@tagName(tos.toTag())},
+                );
             }
 
             const boolean = tos.castTag(.boolean).?.data.boolean;
@@ -257,7 +290,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         },
 
         .BuildList => |len| {
-            var list = try vm.allocator.alloc(PyObject, len);
+            var list = try vm.allocator.alloc(*PyObject, len);
 
             // Popped in reverse order.
             for (0..len) |i| {
@@ -265,8 +298,14 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                 list[index] = vm.stack.pop();
             }
 
-            const array_list = std.ArrayList(PyObject).fromOwnedSlice(vm.allocator, list);
-            const obj = try PyTag.list.create(vm.allocator, .{ .list = array_list });
+            const array_ty = std.ArrayListUnmanaged(*PyObject);
+            const array = array_ty.fromOwnedSlice(list);
+            const obj = try PyTag.list.create(
+                vm.allocator,
+                .{
+                    .list = array,
+                },
+            );
             try vm.stack.append(obj);
         },
 
@@ -279,7 +318,9 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                 .list => {
                     const list = array.castTag(.list).?.data.list.items;
 
-                    if (index.toTag() != .int) @panic("index value must be a int");
+                    if (index.toTag() != .int) {
+                        @panic("index value must be a int");
+                    }
 
                     const access_index = index.castTag(.int).?.data.int;
                     if (access_index < 0) @panic("index value less than 0");
@@ -287,7 +328,10 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                     const obj = list[@intCast(access_index)];
                     try vm.stack.append(obj);
                 },
-                else => std.debug.panic("only list can do index access, found: {s}", .{@tagName(array.toTag())}),
+                else => std.debug.panic(
+                    "only list can do index access, found: {s}",
+                    .{@tagName(array.toTag())},
+                ),
             }
         },
 
@@ -301,14 +345,19 @@ fn exec(vm: *Vm, inst: Instruction) !void {
                 .list => {
                     const list = array.castTag(.list).?.data.list.items;
 
-                    if (index.toTag() != .int) @panic("index value must be a int");
+                    if (index.toTag() != .int) {
+                        @panic("index value must be a int");
+                    }
 
                     const access_index = index.castTag(.int).?.data.int;
                     if (access_index < 0) @panic("index value less than 0");
 
                     list[@intCast(access_index)] = value;
                 },
-                else => std.debug.panic("only list can do index assignment, found: {s}", .{@tagName(array.toTag())}),
+                else => std.debug.panic(
+                    "only list can do index assignment, found: {s}",
+                    .{@tagName(array.toTag())},
+                ),
             }
         },
 
@@ -326,7 +375,10 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .LoadMethod => |name| {
             const object = vm.stack.pop();
 
-            const maybe_func = try object.getInternalMethod(name, vm.allocator);
+            const maybe_func = try object.getInternalMethod(
+                name,
+                vm.allocator,
+            );
 
             if (maybe_func) |func| {
                 try vm.stack.append(func);
@@ -337,7 +389,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         },
 
         .CallMethod => |argc| {
-            var args = try vm.allocator.alloc(PyObject, argc);
+            var args = try vm.allocator.alloc(*PyObject, argc);
 
             for (0..argc) |i| {
                 const index = argc - i - 1;
@@ -347,7 +399,13 @@ fn exec(vm: *Vm, inst: Instruction) !void {
             const self = vm.stack.pop();
             const func = vm.stack.pop();
 
-            func.callFunc(vm, try std.mem.concat(vm.allocator, PyObject, &.{ &.{self}, args }));
+            func.callFunc(
+                vm,
+                try std.mem.concat(vm.allocator, *PyObject, &.{
+                    &.{self},
+                    args,
+                }),
+            );
         },
 
         else => std.debug.panic("TODO: exec {s}", .{@tagName(inst)}),

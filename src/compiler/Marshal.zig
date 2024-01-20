@@ -36,7 +36,10 @@ bytes: []const u8,
 allocator: std.mem.Allocator,
 co: *CodeObject,
 
-pub fn load(allocator: std.mem.Allocator, input_bytes: []const u8) !CodeObject {
+pub fn load(
+    allocator: std.mem.Allocator,
+    input_bytes: []const u8,
+) !CodeObject {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
@@ -73,7 +76,9 @@ fn read_object(marshal: *Marshal) Result {
         byte = clearBit(byte, 7);
 
         ref_id = marshal.flag_refs.items.len;
-        marshal.flag_refs.append(null) catch @panic("failed to append flag ref");
+        marshal.flag_refs.append(null) catch {
+            @panic("failed to append flag ref");
+        };
     }
 
     const ty: ObjType = @enumFromInt(byte);
@@ -92,9 +97,13 @@ fn read_object(marshal: *Marshal) Result {
             const size = marshal.read_bytes(1);
             var results = std.ArrayList(Result).init(marshal.allocator);
             for (0..size[0]) |_| {
-                results.append(marshal.read_object()) catch @panic("failed to append to tuple");
+                results.append(marshal.read_object()) catch {
+                    @panic("failed to append to tuple");
+                };
             }
-            result = .{ .Tuple = results.toOwnedSlice() catch @panic("OOM") };
+            result = .{
+                .Tuple = results.toOwnedSlice() catch @panic("OOM"),
+            };
         },
 
         .TYPE_INT => result = marshal.read_long(),
@@ -106,7 +115,11 @@ fn read_object(marshal: *Marshal) Result {
 
         .TYPE_REF => {
             const index: u32 = @intCast(marshal.read_long().Int);
-            marshal.references.append(.{ .byte = marshal.cursor, .index = index }) catch @panic("failed to append to references");
+            marshal.references.append(
+                .{ .byte = marshal.cursor, .index = index },
+            ) catch {
+                @panic("failed to append to references");
+            };
             marshal.flag_refs.items[index].?.usages += 1;
             result = .{
                 .Ref = .{
@@ -116,14 +129,17 @@ fn read_object(marshal: *Marshal) Result {
             };
         },
 
-        // This causes marshal to free some memory, so we just return to prevent it
-        // from access flag_refs again.
+        // This causes marshal to free some memory,
+        // so we just return to prevent it from access flag_refs again.
         .TYPE_CODE => return marshal.read_codeobject(),
 
         .TYPE_TRUE => result = .{ .Bool = true },
         .TYPE_FALSE => result = .{ .Bool = false },
 
-        else => std.debug.panic("Unsupported ObjType: {s}\n", .{@tagName(ty)}),
+        else => std.debug.panic(
+            "Unsupported ObjType: {s}\n",
+            .{@tagName(ty)},
+        ),
     }
 
     if (ref_id) |id| {
@@ -161,10 +177,14 @@ fn read_codeobject(marshal: *Marshal) Result {
 
     for (structure) |struc| {
         const name, const method = struc;
-        dict.put(name, method(marshal)) catch @panic("failed to put onto co dict");
+        dict.put(name, method(marshal)) catch @panic(
+            "failed to put onto co dict",
+        );
     }
 
-    const co = marshal.allocator.create(CodeObject) catch @panic("failed to allocate codeobject");
+    const co = marshal.allocator.create(CodeObject) catch @panic(
+        "failed to allocate codeobject",
+    );
     errdefer marshal.allocator.free(co);
 
     co.argcount = @intCast(dict.get("argcount").?.Int);
@@ -226,12 +246,18 @@ pub const Result = union(enum) {
                 try writer.print(")", .{});
             },
             .Ref => |ref| {
-                try writer.print("{}", .{(co.flag_refs[ref.index] orelse unreachable).content.fmt(co)});
+                const flag_ref = co.flag_refs[ref.index] orelse unreachable;
+                try writer.print("{}", .{
+                    flag_ref.content.fmt(co),
+                });
             },
             .None => try writer.print("None", .{}),
             .String => |string| try writer.print("{s}", .{string}),
             .Bool => |boolean| try writer.print("{}", .{boolean}),
-            else => std.debug.panic("TODO: Result.format2 {s}", .{@tagName(result)}),
+            else => std.debug.panic(
+                "TODO: Result.format2 {s}",
+                .{@tagName(result)},
+            ),
         }
     }
 
@@ -283,7 +309,10 @@ fn read_py_long(marshal: *Marshal) Result {
     return .{ .Int = if (n > 0) result else -result };
 }
 
-fn read_string(marshal: *Marshal, options: struct { size: ?u32 = null, short: bool = false }) Result {
+fn read_string(
+    marshal: *Marshal,
+    options: struct { size: ?u32 = null, short: bool = false },
+) Result {
     const string_size: u32 = blk: {
         if (options.size) |size| {
             break :blk size;
@@ -306,7 +335,10 @@ fn set_version(marshal: *Marshal, magic_bytes: [4]u8) void {
         // We only support 3.10 bytecode
         3430...3439 => .{ .major = 3, .minor = 10 },
         // 3450...3495 => .{ .major = 3, .minor = 11 },
-        else => std.debug.panic("pyc compiled with unsupported magic: {d}", .{magic_number}),
+        else => std.debug.panic(
+            "pyc compiled with unsupported magic: {d}",
+            .{magic_number},
+        ),
     };
 }
 

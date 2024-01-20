@@ -61,23 +61,43 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
             .LOAD_CONST => {
                 const index = bytes[cursor + 1];
                 const inst = switch (co.consts[index]) {
-                    .Int => |int| Instruction{ .LoadConst = .{ .Integer = int } },
+                    .Int => |int| Instruction{
+                        .LoadConst = .{ .Integer = int },
+                    },
                     .None => Instruction{ .LoadConst = .None },
-                    .String => |string| Instruction{ .LoadConst = .{ .String = string } },
+                    .String => |string| Instruction{
+                        .LoadConst = .{ .String = string },
+                    },
                     .Tuple => |tuple| blk: {
-                        var tuple_list = std.ArrayList(Constant).init(compiler.allocator);
+                        var tuple_list = std.ArrayList(Constant).init(
+                            compiler.allocator,
+                        );
                         for (tuple) |tup| {
                             switch (tup) {
-                                .Int => |int| try tuple_list.append(.{ .Integer = int }),
-                                else => std.debug.panic("cannot reify tuple that contains type: {s}", .{
-                                    @tagName(tup),
+                                .Int => |int| try tuple_list.append(.{
+                                    .Integer = int,
                                 }),
+                                else => std.debug.panic(
+                                    "cannot reify tuple that contains type: {s}",
+                                    .{
+                                        @tagName(tup),
+                                    },
+                                ),
                             }
                         }
-                        break :blk Instruction{ .LoadConst = .{ .Tuple = try tuple_list.toOwnedSlice() } };
+                        break :blk Instruction{
+                            .LoadConst = .{
+                                .Tuple = try tuple_list.toOwnedSlice(),
+                            },
+                        };
                     },
-                    .Bool => |boolean| Instruction{ .LoadConst = .{ .Boolean = boolean } },
-                    else => |panic_op| std.debug.panic("cannot load inst {s}", .{@tagName(panic_op)}),
+                    .Bool => |boolean| Instruction{
+                        .LoadConst = .{ .Boolean = boolean },
+                    },
+                    else => |panic_op| std.debug.panic(
+                        "cannot load inst {s}",
+                        .{@tagName(panic_op)},
+                    ),
                 };
                 try instructions.append(inst);
                 cursor += 2;
@@ -112,14 +132,18 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
 
             .POP_JUMP_IF_FALSE => {
                 const target = bytes[cursor + 1];
-                const inst = Instruction{ .PopJump = .{ .case = false, .target = target } };
+                const inst = Instruction{
+                    .PopJump = .{ .case = false, .target = target },
+                };
                 try instructions.append(inst);
                 cursor += 2;
             },
 
             .POP_JUMP_IF_TRUE => {
                 const target = bytes[cursor + 1];
-                const inst = Instruction{ .PopJump = .{ .case = true, .target = target } };
+                const inst = Instruction{
+                    .PopJump = .{ .case = true, .target = target },
+                };
                 try instructions.append(inst);
                 cursor += 2;
             },
