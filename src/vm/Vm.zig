@@ -92,12 +92,14 @@ fn exec(vm: *Vm, i: Instruction) !void {
     defer t.end();
 
     switch (i) {
-        .LoadConst => |inst| try vm.execLoadConst(inst),
+        .LoadConst => |constant| try vm.execLoadConst(constant),
+        .StoreName => |name| try vm.execStoreName(name),
 
         else => std.debug.panic("TODO: exec {s}", .{@tagName(i)}),
     }
 }
 
+/// Stores an immediate Constant on the stack.
 fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
     return switch (load_const) {
         .Integer => |int| {
@@ -115,6 +117,17 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
         },
         else => std.debug.panic("TODO: execLoadConst: {s}", .{@tagName(load_const)}),
     };
+}
+
+/// Creates a relation between the TOS and the store_name string.
+/// This relation is stored on the Pool.
+///
+/// The idea is that when the next variable comes along and interns its name
+/// it will find the entry on the pool, and pull it out. Then run indexToKey on that.
+fn execStoreName(vm: *Vm, name: []const u8) !void {
+    // Create a Value for the string.
+    var val = try Value.Tag.create(.string, vm.allocator, .{ .string = name });
+    _ = try val.intern(vm);
 }
 
 // Jump Logic

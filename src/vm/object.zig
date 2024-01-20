@@ -25,10 +25,13 @@ pub const Value = struct {
 
     pub const Tag = enum(usize) {
         int,
+        string,
 
         pub fn Type(comptime t: Tag) type {
             return switch (t) {
-                .int => Payload.Value,
+                .int,
+                .string,
+                => Payload.Value,
             };
         }
 
@@ -76,6 +79,10 @@ pub const Value = struct {
                 const pl = value.castTag(.int).?.data;
                 return vm.pool.get(vm.allocator, .{ .int_type = .{ .value = pl.int } });
             },
+            .string => {
+                const pl = value.castTag(.string).?.data;
+                return vm.pool.get(vm.allocator, .{ .string_type = .{ .value = pl.string } });
+            },
         }
     }
 
@@ -86,6 +93,7 @@ pub const Value = struct {
             base: Payload,
             data: union(enum) {
                 int: BigIntManaged,
+                string: []const u8,
             },
         };
     };

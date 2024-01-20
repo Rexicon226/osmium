@@ -17,19 +17,13 @@ items: std.MultiArrayList(Item) = .{},
 
 decls: std.MultiArrayList(Key) = .{},
 
+/// Shows the relation between a name and index.
+strings: std.StringArrayHashMapUnmanaged(Index) = .{},
+
 /// A index into the Pool map.
 pub const Index = enum(u32) {
-    none_type,
-
     int_type,
     string_type,
-    bool_type,
-    range_type,
-
-    list_type,
-    tuple_type,
-
-    zig_function_type,
 
     /// Not to be used for actual VM
     none,
@@ -46,16 +40,28 @@ pub const Tag = enum(u8) {
     /// An integer type. Always signed.
     /// Stored as a BigInt, however this is completely obfuscated to the Compiler.
     ///
-    /// Data is a index to extra, where the BigInt is stored. We do NOT check if similar BigInts already exist
-    /// because this would be too expensive.
+    /// Data is an index to extra, where the BigInt is stored. We do NOT check if similar
+    /// BigInts already exist because this would be too expensive.
     int,
+
+    /// String type.
+    ///
+    /// Data is an index to string, where the String is stored.
+    /// We need to check if the value already exists in extra, because some processes
+    /// rely on storing data in the InternPool.
+    string,
 };
 
 pub const Key = union(enum) {
     int_type: Int,
+    string_type: String,
 
     pub const Int = struct {
         value: BigIntManaged,
+    };
+
+    pub const String = struct {
+        value: []const u8,
     };
 
     pub fn hash32(key: Key, pool: *const Pool) u32 {
@@ -69,7 +75,8 @@ pub const Key = union(enum) {
         const seed = @intFromEnum(@as(KeyTag, key));
 
         return switch (key) {
-            .int_type => |int| Hash.hash(seed, asBytes(&int)),
+            .int_type => |int| Hash.hash(seed, asBytes(&int.value)),
+            .string_type => |string| Hash.hash(seed, string.value),
         };
     }
 
@@ -84,6 +91,10 @@ pub const Key = union(enum) {
             .int_type => |a_info| {
                 const b_info = b.int_type;
                 return std.meta.eql(a_info, b_info);
+            },
+            .string_type => |a_info| {
+                const b_info = b.string_type;
+                return std.mem.eql(u8, a_info.value, b_info.value);
             },
         }
     }
@@ -106,6 +117,8 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
                 .data = @intCast(index),
             });
         },
+        // TODO: String
+        .string_type => unreachable,
     }
     return @enumFromInt(pool.items.len - 1);
 }
@@ -129,5 +142,6 @@ pub fn indexToKey(pool: *const Pool, index: Index) Key {
 
     return switch (item.tag) {
         .int => return pool.decls.get(data),
+        .string => return pool.decls.get(data),
     };
 }
