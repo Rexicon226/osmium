@@ -12,20 +12,26 @@ const Allocator = std.mem.Allocator;
 
 const assert = std.debug.assert;
 
+const log = std.log.scoped(.pool);
+
 map: std.AutoArrayHashMapUnmanaged(void, void) = .{},
 items: std.MultiArrayList(Item) = .{},
 
 decls: std.MultiArrayList(Key) = .{},
 
-/// Shows the relation between a name and index.
-strings: std.StringArrayHashMapUnmanaged(Index) = .{},
+/// A complete array of all bytes used in the Pool.
+/// strings store a length and start index into this array.
+///
+/// TODO: Potential optimizations later are checking how far back we can "insert"
+/// the string into the array to share bytes between entries.
+strings: std.ArrayListUnmanaged(u8) = .{},
 
 /// A index into the Pool map.
 pub const Index = enum(u32) {
     int_type,
     string_type,
 
-    /// Not to be used for actual VM
+    /// Not to be used for actual VMW
     none,
 
     _,
@@ -40,15 +46,14 @@ pub const Tag = enum(u8) {
     /// An integer type. Always signed.
     /// Stored as a BigInt, however this is completely obfuscated to the Compiler.
     ///
-    /// Data is an index to extra, where the BigInt is stored. We do NOT check if similar
+    /// Data is an index to decls, where the BigInt is stored. We do NOT check if similar
     /// BigInts already exist because this would be too expensive.
     int,
 
     /// String type.
     ///
-    /// Data is an index to string, where the String is stored.
-    /// We need to check if the value already exists in extra, because some processes
-    /// rely on storing data in the InternPool.
+    /// Data is index into decls, which stores the coordinates of the bytes in the
+    /// `strings` arraylist.
     string,
 };
 
@@ -61,7 +66,8 @@ pub const Key = union(enum) {
     };
 
     pub const String = struct {
-        value: []const u8,
+        start: u32,
+        length: u32,
     };
 
     pub fn hash32(key: Key, pool: *const Pool) u32 {
@@ -69,15 +75,17 @@ pub const Key = union(enum) {
     }
 
     pub fn hash64(key: Key, pool: *const Pool) u64 {
-        _ = pool;
         const asBytes = std.mem.asBytes;
         const KeyTag = @typeInfo(Key).Union.tag_type.?;
         const seed = @intFromEnum(@as(KeyTag, key));
 
-        return switch (key) {
-            .int_type => |int| Hash.hash(seed, asBytes(&int.value)),
-            .string_type => |string| Hash.hash(seed, string.value),
-        };
+        switch (key) {
+            .int_type => |int| return Hash.hash(seed, asBytes(&int.value)),
+            .string_type => |string| {
+                const bytes = pool.strings.items[string.start .. string.start + string.length];
+                return Hash.hash(seed, bytes);
+            },
+        }
     }
 
     pub fn eql(a: Key, b: Key, pool: *const Pool) bool {
@@ -94,7 +102,11 @@ pub const Key = union(enum) {
             },
             .string_type => |a_info| {
                 const b_info = b.string_type;
-                return std.mem.eql(u8, a_info.value, b_info.value);
+                // We don't need to check if the actual string is equal, that too expensive.
+                // We can just check if the start and length is the same, which will always lead
+                // to the same string.
+                if (a_info.start == b_info.start and a_info.length == b_info.length) return true;
+                return false;
             },
         }
     }
@@ -104,8 +116,11 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
     const adapter: KeyAdapter = .{ .pool = pool };
 
     const gop = try pool.map.getOrPutAdapted(ally, key, adapter);
+    log.debug("Gop: {}\n", .{gop.found_existing});
+
     if (gop.found_existing) return @enumFromInt(gop.index);
     try pool.items.ensureUnusedCapacity(ally, 1);
+
     switch (key) {
         .int_type => |int_type| {
             // Append the BigInt to the extras
@@ -117,8 +132,15 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
                 .data = @intCast(index),
             });
         },
-        // TODO: String
-        .string_type => unreachable,
+        .string_type => |string_type| {
+            const index = pool.decls.len;
+            try pool.decls.append(ally, .{ .string_type = string_type });
+
+            pool.items.appendAssumeCapacity(.{
+                .tag = .string,
+                .data = @intCast(index),
+            });
+        },
     }
     return @enumFromInt(pool.items.len - 1);
 }
@@ -140,8 +162,11 @@ pub fn indexToKey(pool: *const Pool, index: Index) Key {
     const item = pool.items.get(@intFromEnum(index));
     const data = item.data;
 
-    return switch (item.tag) {
+    switch (item.tag) {
         .int => return pool.decls.get(data),
-        .string => return pool.decls.get(data),
-    };
+        .string => {
+            return pool.decls.get(data);
+        },
+    }
+    unreachable;
 }

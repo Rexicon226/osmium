@@ -70,6 +70,20 @@ pub const Value = struct {
         return null;
     }
 
+    /// Modified version of `create` that wraps the process of adding the bytes to `pool.strings`
+    pub fn createString(bytes: []const u8, vm: *Vm) error{OutOfMemory}!Value {
+        const start = vm.pool.strings.items.len;
+        const len = bytes.len;
+
+        // Insert the bytes into the array.
+        try vm.pool.strings.appendSlice(vm.allocator, bytes);
+
+        return Tag.create(.string, vm.allocator, .{ .string = .{
+            .start = @intCast(start),
+            .length = @intCast(len),
+        } });
+    }
+
     // Interns the `Value` onto the Pool. Returns that index on the pool.
     pub fn intern(value: *Value, vm: *Vm) Allocator.Error!Index {
         if (value.ip_index != .none) return value.ip_index;
@@ -81,7 +95,10 @@ pub const Value = struct {
             },
             .string => {
                 const pl = value.castTag(.string).?.data;
-                return vm.pool.get(vm.allocator, .{ .string_type = .{ .value = pl.string } });
+                return vm.pool.get(vm.allocator, .{ .string_type = .{
+                    .start = pl.string.start,
+                    .length = pl.string.length,
+                } });
             },
         }
     }
@@ -93,7 +110,13 @@ pub const Value = struct {
             base: Payload,
             data: union(enum) {
                 int: BigIntManaged,
-                string: []const u8,
+
+                /// The actual bytes are stored in the pool.strings array.
+                /// access with pool.strings.items[start..start + length].
+                string: struct {
+                    start: u32,
+                    length: u32,
+                },
             },
         };
     };

@@ -23,10 +23,11 @@ const builtins = @import("../builtins.zig");
 
 const log = std.log.scoped(.vm);
 
-/// Here live the temporary Index references to the Pool.
 /// Instead of using large amounts of shared memory pointers
 /// we can intern the PyObject to reduce memory usage and prevent over writes.
-stack: std.ArrayListUnmanaged(Index),
+stack: std.ArrayListUnmanaged(Index) = .{},
+/// Same thing as the stack, expect that this is for the scope.
+scope: std.ArrayListUnmanaged(Index) = .{},
 
 /// This is the main scope pool. I think it's better to have all values live by default
 /// on the Pool, before being taken in to the stack. This will allow us to avoid copying
@@ -47,7 +48,6 @@ pub fn init() !Vm {
     defer t.end();
 
     return .{
-        .stack = undefined,
         .allocator = undefined,
         .program_counter = 0,
         .is_running = false,
@@ -66,8 +66,6 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
     const allocator = arena.allocator();
 
     vm.allocator = allocator;
-
-    vm.stack = std.ArrayListUnmanaged(Index){};
 
     while (vm.is_running) {
         const instruction = instructions[vm.program_counter];
@@ -126,8 +124,9 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
 /// it will find the entry on the pool, and pull it out. Then run indexToKey on that.
 fn execStoreName(vm: *Vm, name: []const u8) !void {
     // Create a Value for the string.
-    var val = try Value.Tag.create(.string, vm.allocator, .{ .string = name });
-    _ = try val.intern(vm);
+    var val = try Value.createString(name, vm);
+    const index = try val.intern(vm);
+    try vm.scope.append(vm.allocator, index);
 }
 
 // Jump Logic
