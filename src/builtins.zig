@@ -17,7 +17,7 @@ pub const builtin_fns = &.{
     // .{ "abs", abs },
     // .{ "bin", bin },
     .{ "print", print },
-    // .{ "len", len },
+    .{ "len", len },
     // .{ "range", range },
     // // zig fmt: on
 };
@@ -36,4 +36,23 @@ fn print(vm: *Vm, args: []Pool.Key) void {
 
     var return_val = Value.Tag.init(.none);
     vm.stack.append(vm.allocator, return_val.intern(vm) catch @panic("OOM")) catch @panic("OOM");
+}
+
+fn len(vm: *Vm, args: []Pool.Key) void {
+    const t = tracer.trace(@src(), "builtin-len", .{});
+    defer t.end();
+
+    if (args.len != 1) fatal("len() takes exactly one argument", .{});
+
+    const arg = args[0];
+
+    const length = length: {
+        switch (arg) {
+            .string_type => |string| break :length string.length,
+            else => fatal("cannot len() on type: {s}", .{@tagName(arg)}),
+        }
+    };
+
+    var val = Value.createConst(.{ .Integer = @intCast(length) }, vm) catch @panic("OOM");
+    vm.stack.append(vm.allocator, val.intern(vm) catch @panic("OOM")) catch @panic("OOM");
 }

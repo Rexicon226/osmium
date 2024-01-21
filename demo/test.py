@@ -1,2 +1,3 @@
-a = "Test"
-print(a)
+a = "test"
+b = len(a)
+print(b)
