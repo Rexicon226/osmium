@@ -126,20 +126,30 @@ fn exec(vm: *Vm, i: Instruction) !void {
 /// Stores an immediate Constant on the stack.
 fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
     return switch (load_const) {
-        .Integer => |int| {
-            // Construct the BigInt that's used on the Pool.
-            const big = try BigIntManaged.initSet(vm.allocator, int);
-
-            // Create Value.
-            var val = try Value.Tag.create(.int, vm.allocator, .{ .int = big });
-
-            // Intern it.
+        inline .Integer,
+        .Boolean,
+        => {
+            var val = try Value.createConst(load_const, vm);
             const index = try val.intern(vm);
-
-            // Put it on the stack.
             try vm.stack.append(vm.allocator, index);
         },
-        .None => {},
+        .Tuple => |tuple| {
+            const tuple_children = try vm.allocator.alloc(Index, tuple.len);
+
+            for (tuple, 0..) |child, i| {
+                var val = try Value.createConst(child, vm);
+                const index = try val.intern(vm);
+                tuple_children[i] = index;
+            }
+
+            var val = try Value.Tag.create(.tuple, vm.allocator, tuple_children);
+            const index = try val.intern(vm);
+            try vm.stack.append(vm.allocator, index);
+        },
+
+        .None => {
+            try vm.stack.append(vm.allocator, @enumFromInt(1));
+        },
         else => std.debug.panic("TODO: execLoadConst: {s}", .{@tagName(load_const)}),
     };
 }

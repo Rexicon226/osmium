@@ -54,6 +54,17 @@ pub const Tag = enum(u8) {
     /// `strings` arraylist.
     string,
 
+    /// Boolean type.
+    ///
+    /// Data is 0 if false, and 1 if true. This prevents us from needing to use a decl Payload.
+    /// saving memory.
+    boolean,
+
+    /// Tuple type.
+    ///
+    /// Data is index into decls which stores the constant list of child Indices.
+    tuple,
+
     /// None type.
     /// This is the literal "None" type from Python.
     ///
@@ -69,6 +80,10 @@ pub const Tag = enum(u8) {
 pub const Key = union(enum) {
     int_type: Int,
     string_type: String,
+    bool_type: Bool,
+
+    tuple_type: Tuple,
+
     zig_func_type: ZigFunc,
 
     none_type: void,
@@ -86,7 +101,17 @@ pub const Key = union(enum) {
         }
     };
 
-    pub const ZigFunc = struct { func_ptr: *const fn (*Vm, []Key) void };
+    pub const Bool = struct {
+        value: bool,
+    };
+
+    pub const Tuple = struct {
+        value: []const Index,
+    };
+
+    pub const ZigFunc = struct {
+        func_ptr: *const fn (*Vm, []Key) void,
+    };
 
     pub fn hash32(key: Key, pool: *const Pool) u32 {
         return @truncate(key.hash64(pool));
@@ -103,6 +128,10 @@ pub const Key = union(enum) {
                 const bytes = pool.strings.items[string.start .. string.start + string.length];
                 return Hash.hash(seed, bytes);
             },
+            .bool_type => |boolean| return Hash.hash(seed, asBytes(&boolean.value)),
+
+            .tuple_type => |tuple| return Hash.hash(seed, asBytes(tuple.value)),
+
             .none_type => return Hash.hash(seed, &.{0x00}),
 
             // Since we share the function pointer, we can be pretty confident that the pointer will never change.
@@ -135,6 +164,15 @@ pub const Key = union(enum) {
                 // Again, since we are pretty confident that the function pointers aren't going to be changing,
                 // we can just compare them.
                 return (a_info.func_ptr == b_info.func_ptr);
+            },
+            .bool_type => |a_info| {
+                const b_info = b.bool_type;
+
+                return a_info.value == b_info.value;
+            },
+            .tuple_type => |a_info| {
+                const b_info = b.tuple_type;
+                return std.meta.eql(a_info, b_info);
             },
             .none_type => unreachable,
         }
@@ -176,6 +214,21 @@ pub const Key = union(enum) {
             .int_type => |int_type| {
                 try writer.print("{}", .{int_type.value});
             },
+            .bool_type => |bool_type| {
+                try writer.print("{s}", .{if (bool_type.value) "True" else "False"});
+            },
+            .tuple_type => |tuple_type| {
+                const tuples = tuple_type.value;
+
+                try writer.print("(", .{});
+                for (tuples, 0..) |tuple, i| {
+                    const tuple_key = pool.indexToKey(tuple);
+                    try writer.print("{}", .{tuple_key.fmt(pool)});
+
+                    if (i < tuples.len - 1) try writer.print(", ", .{});
+                }
+                try writer.print(")", .{});
+            },
 
             else => |else_case| try writer.print("TODO: {s}", .{@tagName(else_case)}),
         }
@@ -214,6 +267,23 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
                 .data = @intCast(index),
             });
         },
+        .bool_type => |bool_type| {
+            pool.items.appendAssumeCapacity(.{
+                .tag = .boolean,
+                .data = @intFromBool(bool_type.value),
+            });
+        },
+
+        .tuple_type => |tuple_type| {
+            const index = pool.decls.len;
+            try pool.decls.append(ally, .{ .tuple_type = tuple_type });
+
+            pool.items.appendAssumeCapacity(.{
+                .tag = .tuple,
+                .data = @intCast(index),
+            });
+        },
+
         // Always stored at Index 1
         .none_type => {
             pool.items.appendAssumeCapacity(.{
@@ -256,6 +326,16 @@ pub fn indexToKey(pool: *const Pool, index: Index) Key {
     switch (item.tag) {
         .int => return pool.decls.get(data),
         .string => return pool.decls.get(data),
+        .boolean => {
+            const boolean = if (data == 1) true else false;
+            return .{
+                .bool_type = .{
+                    .value = boolean,
+                },
+            };
+        },
+        .tuple => return pool.decls.get(data),
+
         .none => return .{ .none_type = {} },
         .zig_func => return pool.decls.get(data),
     }

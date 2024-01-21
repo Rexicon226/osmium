@@ -1,5 +1,6 @@
 const std = @import("std");
 const Vm = @import("Vm.zig");
+const Compiler = @import("../compiler/Compiler.zig");
 
 const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
@@ -30,6 +31,8 @@ pub const Value = struct {
 
         int,
         string,
+        boolean,
+        tuple,
 
         /// A builtin Zig defined function.
         zig_function,
@@ -40,7 +43,10 @@ pub const Value = struct {
             return switch (t) {
                 .int,
                 .string,
+                .boolean,
                 => Payload.Value,
+
+                .tuple => Payload.Tuple,
 
                 .zig_function => Payload.ZigFunc,
 
@@ -111,6 +117,19 @@ pub const Value = struct {
         } });
     }
 
+    pub fn createConst(constant: Compiler.Instruction.Constant, vm: *Vm) error{OutOfMemory}!Value {
+        switch (constant) {
+            .Integer => |int| {
+                const big = try BigIntManaged.initSet(vm.allocator, int);
+                return try Value.Tag.create(.int, vm.allocator, .{ .int = big });
+            },
+            .Boolean => |boolean| {
+                return try Value.Tag.create(.boolean, vm.allocator, .{ .boolean = boolean });
+            },
+            else => std.debug.panic("TODO: createConst {s}", .{@tagName(constant)}),
+        }
+    }
+
     // Interns the `Value` onto the Pool. Returns that index on the pool.
     pub fn intern(value: *Value, vm: *Vm) Allocator.Error!Index {
         // Already interned.
@@ -128,6 +147,15 @@ pub const Value = struct {
                     .start = pl.string.start,
                     .length = pl.string.length,
                 } });
+            },
+            .boolean => {
+                const pl = value.castTag(.boolean).?.data;
+                return vm.pool.get(vm.allocator, .{ .bool_type = .{ .value = pl.boolean } });
+            },
+
+            .tuple => {
+                const pl = value.castTag(.tuple).?.data;
+                return vm.pool.get(vm.allocator, .{ .tuple_type = .{ .value = pl } });
             },
 
             .zig_function => {
@@ -157,12 +185,21 @@ pub const Value = struct {
                     start: u32,
                     length: u32,
                 },
+
+                boolean: bool,
             },
+        };
+
+        pub const Tuple = struct {
+            base: Payload,
+            data: []const Pool.Index,
         };
 
         pub const ZigFunc = struct {
             base: Payload,
             data: struct {
+                // TODO: conver this to resolve inside the builtin function
+                // I don't like carrying around the keys
                 func_ptr: *const fn (*Vm, []Pool.Key) void,
             },
         };

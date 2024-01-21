@@ -77,6 +77,9 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                                 .Int => |int| try tuple_list.append(.{
                                     .Integer = int,
                                 }),
+                                .Bool => |boolean| try tuple_list.append(.{
+                                    .Boolean = boolean,
+                                }),
                                 else => std.debug.panic(
                                     "cannot reify tuple that contains type: {s}",
                                     .{
