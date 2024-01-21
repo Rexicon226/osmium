@@ -4,6 +4,8 @@ const std = @import("std");
 const CodeObject = @import("CodeObject.zig");
 const tracer = @import("tracer");
 
+const Marshal = @import("Marshal.zig");
+
 const OpCodes = @import("opcodes.zig");
 const OpCode = OpCodes.OpCode;
 
@@ -73,20 +75,8 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                             compiler.allocator,
                         );
                         for (tuple) |tup| {
-                            switch (tup) {
-                                .Int => |int| try tuple_list.append(.{
-                                    .Integer = int,
-                                }),
-                                .Bool => |boolean| try tuple_list.append(.{
-                                    .Boolean = boolean,
-                                }),
-                                else => std.debug.panic(
-                                    "cannot reify tuple that contains type: {s}",
-                                    .{
-                                        @tagName(tup),
-                                    },
-                                ),
-                            }
+                            const constant = result2Const(tup, co);
+                            try tuple_list.append(constant);
                         }
                         break :blk Instruction{
                             .LoadConst = .{
@@ -215,6 +205,32 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
     }
 
     return inst_slice;
+}
+
+fn result2Const(result: Marshal.Result, co: CodeObject) Instruction.Constant {
+    switch (result) {
+        .Int => |int| return .{
+            .Integer = int,
+        },
+        .Bool => |boolean| return .{
+            .Boolean = boolean,
+        },
+        .String => |string| return .{
+            .String = string,
+        },
+        .Ref => |ref| {
+            // We could use Python's own interning system,
+            // but ours is more effienct and we will just resolve them here.
+            const item = co.flag_refs[ref.index] orelse @panic("no ref index in flag_ref");
+            return result2Const(item.content, co);
+        },
+        else => std.debug.panic(
+            "cannot reify tuple that contains type: {s}",
+            .{
+                @tagName(result),
+            },
+        ),
+    }
 }
 
 pub const Instruction = union(enum) {
