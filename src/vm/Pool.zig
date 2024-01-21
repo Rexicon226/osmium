@@ -80,6 +80,10 @@ pub const Key = union(enum) {
     pub const String = struct {
         start: u32,
         length: u32,
+
+        pub fn get(self: *const String, pool: Pool) []const u8 {
+            return pool.strings.items[self.start .. self.start + self.length];
+        }
     };
 
     pub const ZigFunc = struct { func_ptr: *const fn (*Vm, []Key) void };
@@ -135,6 +139,52 @@ pub const Key = union(enum) {
             .none_type => unreachable,
         }
     }
+
+    pub fn format(
+        _: Key,
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        _: anytype,
+    ) !void {
+        @compileError("don't use format on Key, use key.fmt instead");
+    }
+
+    pub fn fmt(self: Key, pool: Pool) std.fmt.Formatter(format2) {
+        return .{ .data = .{
+            .key = self,
+            .pool = pool,
+        } };
+    }
+
+    fn format2(
+        ctx: FormatCtx,
+        comptime format_bytes: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = options;
+        assert(format_bytes.len == 0);
+
+        const key = ctx.key;
+        const pool = ctx.pool;
+
+        switch (key) {
+            .string_type => |string_key| {
+                const bytes = string_key.get(pool);
+                try writer.print("'{s}'", .{bytes});
+            },
+            .int_type => |int_type| {
+                try writer.print("{}", .{int_type.value});
+            },
+
+            else => |else_case| try writer.print("TODO: {s}", .{@tagName(else_case)}),
+        }
+    }
+
+    const FormatCtx = struct {
+        key: Key,
+        pool: Pool,
+    };
 };
 
 pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {

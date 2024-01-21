@@ -23,13 +23,16 @@ pub const builtin_fns = &.{
 };
 
 fn print(vm: *Vm, args: []Pool.Key) void {
-    _ = args;
     const t = tracer.trace(@src(), "builtin-print", .{});
     defer t.end();
 
     const stdout = std.io.getStdOut().writer();
 
-    stdout.print("Test\n", .{}) catch unreachable;
+    for (args) |arg| {
+        stdout.print("{}", .{arg.fmt(vm.pool)}) catch @panic("OOM");
+    }
+
+    stdout.print("\n", .{}) catch @panic("OOM");
 
     var return_val = Value.Tag.init(.none);
     vm.stack.append(vm.allocator, return_val.intern(vm) catch @panic("OOM")) catch @panic("OOM");

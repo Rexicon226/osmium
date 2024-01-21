@@ -26,9 +26,10 @@ const log = std.log.scoped(.vm);
 /// Instead of using large amounts of shared memory pointers
 /// we can intern the PyObject to reduce memory usage and prevent over writes.
 stack: std.ArrayListUnmanaged(Index) = .{},
+
 /// Same thing as the stack, expect that this is for the scope.
-/// It also relates a Index string (name) to an Index (payload)
-scope: std.AutoArrayHashMapUnmanaged(Index, Index) = .{},
+/// It also relates a name to an Index (payload)
+scope: std.StringArrayHashMapUnmanaged(Index) = .{},
 
 /// This is the main scope pool. I think it's better to have all values live by default
 /// on the Pool, before being taken in to the stack. This will allow us to avoid copying
@@ -73,11 +74,6 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
     // Add the builtin functions to the scope.
     inline for (builtins.builtin_fns) |builtin_fn| {
         const name, const fn_ptr = builtin_fn;
-
-        // Process the name.
-        var name_val = try Value.createString(name, vm);
-        const name_index = try name_val.intern(vm);
-
         // Process the function.
         var func_val = try Value.Tag.create(
             .zig_function,
@@ -87,7 +83,7 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
         const func_index = try func_val.intern(vm);
 
         // Add to the scope.
-        try vm.scope.put(vm.allocator, name_index, func_index);
+        try vm.scope.put(vm.allocator, name, func_index);
     }
 
     while (vm.is_running) {
@@ -121,6 +117,7 @@ fn exec(vm: *Vm, i: Instruction) !void {
         .StoreName => |name| try vm.execStoreName(name),
         .ReturnValue => try vm.execReturnValue(),
         .CallFunction => |argc| try vm.execCallFunction(argc),
+        .PopTop => try vm.execPopTop(),
 
         else => std.debug.panic("TODO: exec {s}", .{@tagName(i)}),
     }
@@ -160,19 +157,11 @@ fn execLoadName(vm: *Vm, name: []const u8) !void {
 /// The idea is that when the next variable comes along and interns its name
 /// it will find the entry on the pool, and pull it out. Then run indexToKey on that.
 fn execStoreName(vm: *Vm, name: []const u8) !void {
-    // TODO: Potential problem I see here is the string interning failing for some reason.
-    // this will make the scope fail to find the relative entry, which could cause problems.
-    // maybe some sort of fallback?
-
-    // Create a Value for the string.
-    var val = try Value.createString(name, vm);
-    const index = try val.intern(vm);
-
     // Pop the stack to get the payload.
     const payload_index = vm.stack.pop();
 
     // Add it to the scope.
-    try vm.scope.put(vm.allocator, index, payload_index);
+    try vm.scope.put(vm.allocator, name, payload_index);
 }
 
 fn execReturnValue(vm: *Vm) !void {
@@ -185,20 +174,34 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
 
     for (0..argc) |i| {
         const ix = argc - i - 1;
-        const index = vm.stack.pop();
-        const key = vm.pool.indexToKey(index);
-        args[ix] = key;
+
+        const name_index = vm.stack.pop();
+        const name_key = vm.pool.indexToKey(name_index);
+
+        const payload_index = vm.scope.get(name_key.string_type.get(vm.pool)) orelse {
+            @panic("CallFunction couldn't find payload in scope");
+        };
+
+        const payload_key = vm.pool.indexToKey(payload_index);
+
+        args[ix] = payload_key;
     }
 
-    const name = vm.stack.pop();
+    const name_index = vm.stack.pop();
+    const name_key = vm.pool.indexToKey(name_index);
+
+    const name = name_key.string_type.get(vm.pool);
 
     // Get the name from the scope.
     const func_index = vm.scope.get(name) orelse @panic("could not find CallFunction");
 
     // Resolve the Key.
     const func_key = vm.pool.indexToKey(func_index);
-    if (func_key != .zig_func_type) @panic("CallFunction on non-zig_func_type");
 
     // Call
     @call(.auto, func_key.zig_func_type.func_ptr, .{ vm, args });
+}
+
+fn execPopTop(vm: *Vm) !void {
+    _ = vm.stack.pop();
 }
