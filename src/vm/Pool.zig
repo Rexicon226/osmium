@@ -21,7 +21,7 @@ const log = std.log.scoped(.pool);
 map: std.AutoArrayHashMapUnmanaged(void, void) = .{},
 items: std.MultiArrayList(Item) = .{},
 
-decls: std.MultiArrayList(Key) = .{},
+decls: std.ArrayListUnmanaged(Key) = .{},
 
 /// A complete array of all bytes used in the Pool.
 /// strings store a length and start index into this array.
@@ -131,11 +131,12 @@ pub const Key = union(enum) {
             if (args.len != 2) std.debug.panic("list.append() takes exactly 1 argument ({d} given)", .{args.len - 1});
 
             const self_index = args[0];
-            const self_key = vm.resolveArg(self_index);
-            const self = self_key.list_type;
-            _ = self;
+            const self_key = vm.resolveMutArg(self_index);
 
-            // Append here
+            std.debug.print("Std: {}\n", .{self_key.list_type.items.items.len});
+
+            self_key.list_type.items.ensureUnusedCapacity(vm.allocator, 1) catch @panic("OOM");
+            self_key.list_type.items.appendAssumeCapacity(args[1]);
 
             var return_val = Value.Tag.init(.none);
             vm.stack.append(vm.allocator, return_val.intern(vm) catch @panic("OOM")) catch @panic("OOM");
@@ -320,7 +321,7 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
     switch (key) {
         .int_type => |int_type| {
             // Append the BigInt to the extras
-            const index = pool.decls.len;
+            const index = pool.decls.items.len;
             try pool.decls.append(ally, .{ .int_type = int_type });
 
             pool.items.appendAssumeCapacity(.{
@@ -329,7 +330,7 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
             });
         },
         .string_type => |string_type| {
-            const index = pool.decls.len;
+            const index = pool.decls.items.len;
             try pool.decls.append(ally, .{ .string_type = string_type });
 
             pool.items.appendAssumeCapacity(.{
@@ -345,7 +346,7 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
         },
 
         .tuple_type => |tuple_type| {
-            const index = pool.decls.len;
+            const index = pool.decls.items.len;
             try pool.decls.append(ally, .{ .tuple_type = tuple_type });
 
             pool.items.appendAssumeCapacity(.{
@@ -355,7 +356,7 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
         },
 
         .list_type => |list_type| {
-            const index = pool.decls.len;
+            const index = pool.decls.items.len;
             try pool.decls.append(ally, .{ .list_type = list_type });
 
             pool.items.appendAssumeCapacity(.{
@@ -373,7 +374,7 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
             return @enumFromInt(1);
         },
         .zig_func_type => |zig_func| {
-            const index = pool.decls.len;
+            const index = pool.decls.items.len;
             try pool.decls.append(ally, .{ .zig_func_type = zig_func });
 
             pool.items.appendAssumeCapacity(.{
@@ -404,8 +405,8 @@ pub fn indexToKey(pool: *const Pool, index: Index) Key {
     const data = item.data;
 
     switch (item.tag) {
-        .int => return pool.decls.get(data),
-        .string => return pool.decls.get(data),
+        .int => return pool.decls.items[data],
+        .string => return pool.decls.items[data],
         .boolean => {
             const boolean = if (data == 1) true else false;
             return .{
@@ -414,11 +415,28 @@ pub fn indexToKey(pool: *const Pool, index: Index) Key {
                 },
             };
         },
-        .tuple => return pool.decls.get(data),
-        .list => return pool.decls.get(data),
+        .tuple => return pool.decls.items[data],
+        .list => return pool.decls.items[data],
 
         .none => return .{ .none_type = {} },
-        .zig_func => return pool.decls.get(data),
+        .zig_func => return pool.decls.items[data],
+    }
+    unreachable;
+}
+
+/// Returns a pointer that is only valid until the Pool is mutated.
+pub fn indexToMutKey(pool: *const Pool, index: Index) *Key {
+    assert(index != .none);
+
+    const item = pool.items.get(@intFromEnum(index));
+    const data = item.data;
+
+    switch (item.tag) {
+        .list => {
+            var key = pool.decls.items[data];
+            return &key;
+        },
+        else => unreachable,
     }
     unreachable;
 }

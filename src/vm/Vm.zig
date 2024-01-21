@@ -192,6 +192,9 @@ fn execStoreName(vm: *Vm, name: []const u8) !void {
 }
 
 fn execReturnValue(vm: *Vm) !void {
+    const index = vm.stack.pop();
+    _ = index;
+
     // Just stop the vm.
     vm.is_running = false;
 }
@@ -253,17 +256,19 @@ fn execBuildList(vm: *Vm, argc: u32) !void {
         args[ix] = index;
     }
 
+    const list = std.ArrayListUnmanaged(Index).fromOwnedSlice(args);
+
     var val = try Value.Tag.create(.list, vm.allocator, .{
-        .items = std.ArrayListUnmanaged(Index).fromOwnedSlice(args),
+        .items = list,
     });
     const index = try val.intern(vm);
     try vm.stack.append(vm.allocator, index);
 }
 
-pub fn resolveArg(vm: *Vm, index: Index) Pool.Key {
+pub fn resolveIndex(vm: *Vm, index: Index) Index {
     const name_key = vm.pool.indexToKey(index);
 
-    const payload_index = index: {
+    return index: {
         switch (name_key) {
             .string_type => |string_type| {
                 // Is this string a reference to something on the scope?
@@ -273,6 +278,15 @@ pub fn resolveArg(vm: *Vm, index: Index) Pool.Key {
             else => break :index index,
         }
     };
+}
 
-    return vm.pool.indexToKey(payload_index);
+pub fn resolveArg(vm: *Vm, index: Index) Pool.Key {
+    const resolved_index = vm.resolveIndex(index);
+    return vm.pool.indexToKey(resolved_index);
+}
+
+/// Returns a pointer that is only valid until the Pool is mutated.
+pub fn resolveMutArg(vm: *Vm, index: Index) *Pool.Key {
+    const resolved_index = vm.resolveIndex(index);
+    return vm.pool.indexToMutKey(resolved_index);
 }
