@@ -14,13 +14,40 @@ const fatal = @import("panic.zig").fatal;
 
 pub const builtin_fns = &.{
     // // zig fmt: off
-    // .{ "abs", abs },
+    .{ "abs", abs },
     // .{ "bin", bin },
     .{ "print", print },
     .{ "len", len },
     // .{ "range", range },
     // // zig fmt: on
 };
+
+fn abs(vm: *Vm, args: []Pool.Key) void {
+    const t = tracer.trace(@src(), "builtin-abs", .{});
+    defer t.end();
+
+    if (args.len != 1) fatal("abs() takes exactly one argument ({d} given)", .{args.len});
+
+    const arg = args[0];
+
+    const index = value: {
+        switch (arg) {
+            .int_type => |int| {
+                var abs_int = int.value;
+                abs_int.abs();
+
+                // Create a new Value from this abs
+                var abs_val = Value.Tag.create(.int, vm.allocator, .{ .int = abs_int }) catch @panic("OOM");
+                const abs_index = abs_val.intern(vm) catch @panic("OOM");
+
+                break :value abs_index;
+            },
+            else => fatal("cannot abs() on type: {s}", .{@tagName(arg)}),
+        }
+    };
+
+    vm.stack.append(vm.allocator, index) catch @panic("OOM");
+}
 
 fn print(vm: *Vm, args: []Pool.Key) void {
     const t = tracer.trace(@src(), "builtin-print", .{});
@@ -42,7 +69,7 @@ fn len(vm: *Vm, args: []Pool.Key) void {
     const t = tracer.trace(@src(), "builtin-len", .{});
     defer t.end();
 
-    if (args.len != 1) fatal("len() takes exactly one argument", .{});
+    if (args.len != 1) fatal("len() takes exactly one argument ({d} given)", .{args.len});
 
     const arg = args[0];
 
