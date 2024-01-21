@@ -188,8 +188,15 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
         const name_index = vm.stack.pop();
         const name_key = vm.pool.indexToKey(name_index);
 
-        const payload_index = vm.scope.get(name_key.string_type.get(vm.pool)) orelse {
-            @panic("CallFunction couldn't find payload in scope");
+        const payload_index = index: {
+            switch (name_key) {
+                .string_type => |string_type| {
+                    // Is this string a reference to something on the pool?
+                    const string_index = vm.scope.get(string_type.get(vm.pool)) orelse name_index;
+                    break :index string_index;
+                },
+                else => break :index name_index,
+            }
         };
 
         const payload_key = vm.pool.indexToKey(payload_index);
