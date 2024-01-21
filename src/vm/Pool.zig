@@ -4,6 +4,8 @@ const Pool = @This();
 const std = @import("std");
 const Hash = std.hash.XxHash3;
 
+const Vm = @import("Vm.zig");
+
 const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
 const BigIntManaged = std.math.big.int.Managed;
@@ -57,11 +59,17 @@ pub const Tag = enum(u8) {
     ///
     /// Data is void, as it has no data.
     none,
+
+    /// A Zig function.
+    ///
+    /// Data is a pointer to a standarized interface for builtins.
+    zig_func,
 };
 
 pub const Key = union(enum) {
     int_type: Int,
     string_type: String,
+    zig_func_type: ZigFunc,
 
     none_type: void,
 
@@ -73,6 +81,8 @@ pub const Key = union(enum) {
         start: u32,
         length: u32,
     };
+
+    pub const ZigFunc = struct { func_ptr: *const fn (*Vm, []Key) void };
 
     pub fn hash32(key: Key, pool: *const Pool) u32 {
         return @truncate(key.hash64(pool));
@@ -90,6 +100,9 @@ pub const Key = union(enum) {
                 return Hash.hash(seed, bytes);
             },
             .none_type => return Hash.hash(seed, &.{0x00}),
+
+            // Since we share the function pointer, we can be pretty confident that the pointer will never change.
+            .zig_func_type => |zig_func| return Hash.hash(seed, asBytes(&zig_func.func_ptr)),
         }
     }
 
@@ -110,8 +123,14 @@ pub const Key = union(enum) {
                 // We don't need to check if the actual string is equal, that too expensive.
                 // We can just check if the start and length is the same, which will always lead
                 // to the same string.
-                if (a_info.start == b_info.start and a_info.length == b_info.length) return true;
-                return false;
+                return (a_info.start == b_info.start and a_info.length == b_info.length);
+            },
+            .zig_func_type => |a_info| {
+                const b_info = b.zig_func_type;
+
+                // Again, since we are pretty confident that the function pointers aren't going to be changing,
+                // we can just compare them.
+                return (a_info.func_ptr == b_info.func_ptr);
             },
             .none_type => unreachable,
         }
@@ -145,12 +164,22 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
                 .data = @intCast(index),
             });
         },
+        // Always stored at Index 1
         .none_type => {
             pool.items.appendAssumeCapacity(.{
                 .tag = .none,
                 .data = 0,
             });
             return @enumFromInt(1);
+        },
+        .zig_func_type => |zig_func| {
+            const index = pool.decls.len;
+            try pool.decls.append(ally, .{ .zig_func_type = zig_func });
+
+            pool.items.appendAssumeCapacity(.{
+                .tag = .zig_func,
+                .data = @intCast(index),
+            });
         },
     }
     return @enumFromInt(pool.items.len - 1);
@@ -160,7 +189,6 @@ pub const KeyAdapter = struct {
     pool: *const Pool,
 
     pub fn eql(ctx: @This(), a: Key, _: void, b_map_index: usize) bool {
-        log.debug("Map Index: {}", .{b_map_index});
         return ctx.pool.indexToKey(@as(Index, @enumFromInt(b_map_index))).eql(a, ctx.pool);
     }
 
@@ -179,6 +207,7 @@ pub fn indexToKey(pool: *const Pool, index: Index) Key {
         .int => return pool.decls.get(data),
         .string => return pool.decls.get(data),
         .none => return .{ .none_type = {} },
+        .zig_func => return pool.decls.get(data),
     }
     unreachable;
 }

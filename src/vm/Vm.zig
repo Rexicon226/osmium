@@ -70,6 +70,26 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
     // Init the pool.
     try vm.pool.init(vm.allocator);
 
+    // Add the builtin functions to the scope.
+    inline for (builtins.builtin_fns) |builtin_fn| {
+        const name, const fn_ptr = builtin_fn;
+
+        // Process the name.
+        var name_val = try Value.createString(name, vm);
+        const name_index = try name_val.intern(vm);
+
+        // Process the function.
+        var func_val = try Value.Tag.create(
+            .zig_function,
+            vm.allocator,
+            .{ .func_ptr = fn_ptr },
+        );
+        const func_index = try func_val.intern(vm);
+
+        // Add to the scope.
+        try vm.scope.put(vm.allocator, name_index, func_index);
+    }
+
     while (vm.is_running) {
         const instruction = instructions[vm.program_counter];
         log.debug(
@@ -100,6 +120,7 @@ fn exec(vm: *Vm, i: Instruction) !void {
         .LoadName => |name| try vm.execLoadName(name),
         .StoreName => |name| try vm.execStoreName(name),
         .ReturnValue => try vm.execReturnValue(),
+        .CallFunction => |argc| try vm.execCallFunction(argc),
 
         else => std.debug.panic("TODO: exec {s}", .{@tagName(i)}),
     }
@@ -157,4 +178,27 @@ fn execStoreName(vm: *Vm, name: []const u8) !void {
 fn execReturnValue(vm: *Vm) !void {
     // Just stop the vm.
     vm.is_running = false;
+}
+
+fn execCallFunction(vm: *Vm, argc: usize) !void {
+    var args = try vm.allocator.alloc(Pool.Key, argc);
+
+    for (0..argc) |i| {
+        const ix = argc - i - 1;
+        const index = vm.stack.pop();
+        const key = vm.pool.indexToKey(index);
+        args[ix] = key;
+    }
+
+    const name = vm.stack.pop();
+
+    // Get the name from the scope.
+    const func_index = vm.scope.get(name) orelse @panic("could not find CallFunction");
+
+    // Resolve the Key.
+    const func_key = vm.pool.indexToKey(func_index);
+    if (func_key != .zig_func_type) @panic("CallFunction on non-zig_func_type");
+
+    // Call
+    @call(.auto, func_key.zig_func_type.func_ptr, .{ vm, args });
 }

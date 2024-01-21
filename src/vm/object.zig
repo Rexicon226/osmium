@@ -32,7 +32,7 @@ pub const Value = struct {
         string,
 
         /// A builtin Zig defined function.
-        // zig_function,
+        zig_function,
 
         pub fn Type(comptime t: Tag) type {
             assert(@intFromEnum(t) >= Tag.first_payload);
@@ -41,6 +41,8 @@ pub const Value = struct {
                 .int,
                 .string,
                 => Payload.Value,
+
+                .zig_function => Payload.ZigFunc,
 
                 .none => @compileError("Tag " ++ @tagName(t) ++ "has no payload"),
             };
@@ -65,6 +67,9 @@ pub const Value = struct {
 
         pub fn init(comptime t: Tag) Value {
             assert(@intFromEnum(t) < Tag.first_payload);
+
+            // Only None has no payload for now, so just ip_index 1
+            return .{ .ip_index = @enumFromInt(1), .legacy = undefined };
         }
     };
 
@@ -125,9 +130,16 @@ pub const Value = struct {
                 } });
             },
 
+            .zig_function => {
+                const pl = value.castTag(.zig_function).?.data;
+                return vm.pool.get(vm.allocator, .{ .zig_func_type = .{
+                    .func_ptr = pl.func_ptr,
+                } });
+            },
+
             // Can't intern none, it's an immediate value.
-            // We reserve the pool index 0 for None.
-            .none => unreachable,
+            // We reserve the pool index 1 for None.
+            .none => return @enumFromInt(1),
         }
     }
 
@@ -150,7 +162,9 @@ pub const Value = struct {
 
         pub const ZigFunc = struct {
             base: Payload,
-            data: struct {},
+            data: struct {
+                func_ptr: *const fn (*Vm, []Pool.Key) void,
+            },
         };
     };
 };
