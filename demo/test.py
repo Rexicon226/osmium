@@ -1,2 +1,2 @@
-b = abs(-10)
-print(abs(-10))
+b = 1
+print(b)

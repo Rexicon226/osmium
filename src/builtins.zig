@@ -14,21 +14,22 @@ const fatal = @import("panic.zig").fatal;
 
 pub const builtin_fns = &.{
     // // zig fmt: off
-    .{ "abs", abs },
+    // .{ "abs", abs },
     // .{ "bin", bin },
     .{ "print", print },
-    .{ "len", len },
+    // .{ "len", len },
     // .{ "range", range },
     // // zig fmt: on
 };
 
-fn abs(vm: *Vm, args: []Pool.Key) void {
+fn abs(vm: *Vm, args: []Index) void {
     const t = tracer.trace(@src(), "builtin-abs", .{});
     defer t.end();
 
     if (args.len != 1) fatal("abs() takes exactly one argument ({d} given)", .{args.len});
 
-    const arg = args[0];
+    const arg_index = args[0];
+    const arg = vm.pool.indexToKey(arg_index);
 
     const index = value: {
         switch (arg) {
@@ -49,13 +50,14 @@ fn abs(vm: *Vm, args: []Pool.Key) void {
     vm.stack.append(vm.allocator, index) catch @panic("OOM");
 }
 
-fn print(vm: *Vm, args: []Pool.Key) void {
+fn print(vm: *Vm, args: []Index) void {
     const t = tracer.trace(@src(), "builtin-print", .{});
     defer t.end();
 
     const stdout = std.io.getStdOut().writer();
 
-    for (args) |arg| {
+    for (args) |arg_index| {
+        const arg = resolveArg(vm, arg_index);
         stdout.print("{}", .{arg.fmt(vm.pool)}) catch @panic("OOM");
     }
 
@@ -65,7 +67,7 @@ fn print(vm: *Vm, args: []Pool.Key) void {
     vm.stack.append(vm.allocator, return_val.intern(vm) catch @panic("OOM")) catch @panic("OOM");
 }
 
-fn len(vm: *Vm, args: []Pool.Key) void {
+fn len(vm: *Vm, args: []Index) void {
     const t = tracer.trace(@src(), "builtin-len", .{});
     defer t.end();
 
@@ -82,4 +84,21 @@ fn len(vm: *Vm, args: []Pool.Key) void {
 
     var val = Value.createConst(.{ .Integer = @intCast(length) }, vm) catch @panic("OOM");
     vm.stack.append(vm.allocator, val.intern(vm) catch @panic("OOM")) catch @panic("OOM");
+}
+
+fn resolveArg(vm: *Vm, index: Index) Pool.Key {
+    const name_key = vm.pool.indexToKey(index);
+
+    const payload_index = index: {
+        switch (name_key) {
+            .string_type => |string_type| {
+                // Is this string a reference to something on the pool?
+                const string_index = vm.scope.get(string_type.get(vm.pool)) orelse index;
+                break :index string_index;
+            },
+            else => break :index index,
+        }
+    };
+
+    return vm.pool.indexToKey(payload_index);
 }

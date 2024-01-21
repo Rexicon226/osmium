@@ -201,9 +201,7 @@ pub const Value = struct {
         pub const ZigFunc = struct {
             base: Payload,
             data: struct {
-                // TODO: conver this to resolve inside the builtin function
-                // I don't like carrying around the keys
-                func_ptr: *const fn (*Vm, []Pool.Key) void,
+                func_ptr: *const fn (*Vm, []Pool.Index) void,
             },
         };
     };

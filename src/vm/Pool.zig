@@ -110,7 +110,7 @@ pub const Key = union(enum) {
     };
 
     pub const ZigFunc = struct {
-        func_ptr: *const fn (*Vm, []Key) void,
+        func_ptr: *const fn (*Vm, []Index) void,
     };
 
     pub fn hash32(key: Key, pool: *const Pool) u32 {

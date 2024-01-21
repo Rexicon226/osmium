@@ -118,6 +118,7 @@ fn exec(vm: *Vm, i: Instruction) !void {
         .ReturnValue => try vm.execReturnValue(),
         .CallFunction => |argc| try vm.execCallFunction(argc),
         .PopTop => try vm.execPopTop(),
+        .BuildList => |argc| try vm.execBuildList(argc),
 
         else => std.debug.panic("TODO: exec {s}", .{@tagName(i)}),
     }
@@ -180,28 +181,12 @@ fn execReturnValue(vm: *Vm) !void {
 }
 
 fn execCallFunction(vm: *Vm, argc: usize) !void {
-    var args = try vm.allocator.alloc(Pool.Key, argc);
+    var args = try vm.allocator.alloc(Index, argc);
 
     for (0..argc) |i| {
         const ix = argc - i - 1;
-
         const name_index = vm.stack.pop();
-        const name_key = vm.pool.indexToKey(name_index);
-
-        const payload_index = index: {
-            switch (name_key) {
-                .string_type => |string_type| {
-                    // Is this string a reference to something on the pool?
-                    const string_index = vm.scope.get(string_type.get(vm.pool)) orelse name_index;
-                    break :index string_index;
-                },
-                else => break :index name_index,
-            }
-        };
-
-        const payload_key = vm.pool.indexToKey(payload_index);
-
-        args[ix] = payload_key;
+        args[ix] = name_index;
     }
 
     const name_index = vm.stack.pop();
@@ -221,4 +206,9 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
 
 fn execPopTop(vm: *Vm) !void {
     _ = vm.stack.pop();
+}
+
+fn execBuildList(vm: *Vm, argc: u32) !void {
+    _ = vm;
+    _ = argc;
 }
