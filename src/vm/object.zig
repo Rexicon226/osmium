@@ -126,6 +126,9 @@ pub const Value = struct {
             .Boolean => |boolean| {
                 return try Value.Tag.create(.boolean, vm.allocator, .{ .boolean = boolean });
             },
+            .String => |string| {
+                return try Value.createString(string, vm);
+            },
             else => std.debug.panic("TODO: createConst {s}", .{@tagName(constant)}),
         }
     }

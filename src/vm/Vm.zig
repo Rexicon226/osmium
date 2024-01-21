@@ -128,6 +128,7 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
     return switch (load_const) {
         inline .Integer,
         .Boolean,
+        .String,
         => {
             var val = try Value.createConst(load_const, vm);
             const index = try val.intern(vm);
@@ -150,7 +151,6 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
         .None => {
             try vm.stack.append(vm.allocator, @enumFromInt(1));
         },
-        else => std.debug.panic("TODO: execLoadConst: {s}", .{@tagName(load_const)}),
     };
 }
 

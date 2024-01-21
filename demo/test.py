@@ -1,2 +1,2 @@
-a = (0, 1, True)
+a = "Test"
 print(a)
