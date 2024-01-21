@@ -33,6 +33,7 @@ pub const Value = struct {
         string,
         boolean,
         tuple,
+        list,
 
         /// A builtin Zig defined function.
         zig_function,
@@ -47,6 +48,7 @@ pub const Value = struct {
                 => Payload.Value,
 
                 .tuple => Payload.Tuple,
+                .list => Payload.List,
 
                 .zig_function => Payload.ZigFunc,
 
@@ -160,6 +162,10 @@ pub const Value = struct {
                 const pl = value.castTag(.tuple).?.data;
                 return vm.pool.get(vm.allocator, .{ .tuple_type = .{ .value = pl } });
             },
+            .list => {
+                const pl = value.castTag(.list).?.data;
+                return vm.pool.get(vm.allocator, .{ .list_type = .{ .items = pl.items } });
+            },
 
             .zig_function => {
                 const pl = value.castTag(.zig_function).?.data;
@@ -196,6 +202,13 @@ pub const Value = struct {
         pub const Tuple = struct {
             base: Payload,
             data: []const Pool.Index,
+        };
+
+        pub const List = struct {
+            base: Payload,
+            data: struct {
+                items: std.ArrayListUnmanaged(Index),
+            },
         };
 
         pub const ZigFunc = struct {

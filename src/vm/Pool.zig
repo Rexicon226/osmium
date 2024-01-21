@@ -30,7 +30,7 @@ strings: std.ArrayListUnmanaged(u8) = .{},
 
 /// A index into the Pool map. Index 0 is none.
 pub const Index = enum(u32) {
-    /// Not to be used for actual VMW
+    /// Not to be used for actual VM
     none,
     _,
 };
@@ -65,6 +65,13 @@ pub const Tag = enum(u8) {
     /// Data is index into decls which stores the constant list of child Indices.
     tuple,
 
+    /// List type.
+    ///
+    /// Data is index into decls which stores an ArrayList of the child Indices.
+    ///
+    /// Member functions are kept in the Object side.
+    list,
+
     /// None type.
     /// This is the literal "None" type from Python.
     ///
@@ -83,6 +90,7 @@ pub const Key = union(enum) {
     bool_type: Bool,
 
     tuple_type: Tuple,
+    list_type: List,
 
     zig_func_type: ZigFunc,
 
@@ -109,6 +117,10 @@ pub const Key = union(enum) {
         value: []const Index,
     };
 
+    pub const List = struct {
+        items: std.ArrayListUnmanaged(Index),
+    };
+
     pub const ZigFunc = struct {
         func_ptr: *const fn (*Vm, []Index) void,
     };
@@ -131,6 +143,7 @@ pub const Key = union(enum) {
             .bool_type => |boolean| return Hash.hash(seed, asBytes(&boolean.value)),
 
             .tuple_type => |tuple| return Hash.hash(seed, asBytes(tuple.value)),
+            .list_type => |list| return Hash.hash(seed, asBytes(list.items.items)),
 
             .none_type => return Hash.hash(seed, &.{0x00}),
 
@@ -173,6 +186,10 @@ pub const Key = union(enum) {
             .tuple_type => |a_info| {
                 const b_info = b.tuple_type;
                 return std.meta.eql(a_info, b_info);
+            },
+            .list_type => |a_info| {
+                const b_info = b.list_type;
+                return std.meta.eql(a_info.items.items, b_info.items.items);
             },
             .none_type => unreachable,
         }
@@ -229,6 +246,18 @@ pub const Key = union(enum) {
                 }
                 try writer.print(")", .{});
             },
+            .list_type => |list_type| {
+                const list = list_type.items.items;
+
+                try writer.print("[", .{});
+                for (list, 0..) |child, i| {
+                    const child_key = pool.indexToKey(child);
+                    try writer.print("{}", .{child_key.fmt(pool)});
+
+                    if (i < list.len - 1) try writer.print(", ", .{});
+                }
+                try writer.print("]", .{});
+            },
 
             else => |else_case| try writer.print("TODO: {s}", .{@tagName(else_case)}),
         }
@@ -284,6 +313,16 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
             });
         },
 
+        .list_type => |list_type| {
+            const index = pool.decls.len;
+            try pool.decls.append(ally, .{ .list_type = list_type });
+
+            pool.items.appendAssumeCapacity(.{
+                .tag = .list,
+                .data = @intCast(index),
+            });
+        },
+
         // Always stored at Index 1
         .none_type => {
             pool.items.appendAssumeCapacity(.{
@@ -335,6 +374,7 @@ pub fn indexToKey(pool: *const Pool, index: Index) Key {
             };
         },
         .tuple => return pool.decls.get(data),
+        .list => return pool.decls.get(data),
 
         .none => return .{ .none_type = {} },
         .zig_func => return pool.decls.get(data),

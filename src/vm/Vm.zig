@@ -209,6 +209,17 @@ fn execPopTop(vm: *Vm) !void {
 }
 
 fn execBuildList(vm: *Vm, argc: u32) !void {
-    _ = vm;
-    _ = argc;
+    var args = try vm.allocator.alloc(Index, argc);
+
+    for (0..argc) |i| {
+        const ix = argc - i - 1;
+        const index = vm.stack.pop();
+        args[ix] = index;
+    }
+
+    var val = try Value.Tag.create(.list, vm.allocator, .{
+        .items = std.ArrayListUnmanaged(Index).fromOwnedSlice(args),
+    });
+    const index = try val.intern(vm);
+    try vm.stack.append(vm.allocator, index);
 }
