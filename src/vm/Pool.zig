@@ -26,14 +26,10 @@ decls: std.MultiArrayList(Key) = .{},
 /// the string into the array to share bytes between entries.
 strings: std.ArrayListUnmanaged(u8) = .{},
 
-/// A index into the Pool map.
+/// A index into the Pool map. Index 0 is none.
 pub const Index = enum(u32) {
-    int_type,
-    string_type,
-
     /// Not to be used for actual VMW
     none,
-
     _,
 };
 
@@ -55,6 +51,12 @@ pub const Tag = enum(u8) {
     /// Data is index into decls, which stores the coordinates of the bytes in the
     /// `strings` arraylist.
     string,
+
+    /// None type.
+    /// This is the literal "None" type from Python.
+    ///
+    /// Data is void, as it has no data.
+    none,
 };
 
 pub const Key = union(enum) {
@@ -118,7 +120,6 @@ pub const Key = union(enum) {
 
 pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
     const adapter: KeyAdapter = .{ .pool = pool };
-
     const gop = try pool.map.getOrPutAdapted(ally, key, adapter);
 
     if (gop.found_existing) return @enumFromInt(gop.index);
@@ -144,7 +145,13 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
                 .data = @intCast(index),
             });
         },
-        .none_type => return @enumFromInt(0),
+        .none_type => {
+            pool.items.appendAssumeCapacity(.{
+                .tag = .none,
+                .data = 0,
+            });
+            return @enumFromInt(1);
+        },
     }
     return @enumFromInt(pool.items.len - 1);
 }
@@ -153,6 +160,7 @@ pub const KeyAdapter = struct {
     pool: *const Pool,
 
     pub fn eql(ctx: @This(), a: Key, _: void, b_map_index: usize) bool {
+        log.debug("Map Index: {}", .{b_map_index});
         return ctx.pool.indexToKey(@as(Index, @enumFromInt(b_map_index))).eql(a, ctx.pool);
     }
 
@@ -163,12 +171,21 @@ pub const KeyAdapter = struct {
 
 pub fn indexToKey(pool: *const Pool, index: Index) Key {
     assert(index != .none);
+
     const item = pool.items.get(@intFromEnum(index));
     const data = item.data;
 
     switch (item.tag) {
         .int => return pool.decls.get(data),
         .string => return pool.decls.get(data),
+        .none => return .{ .none_type = {} },
     }
     unreachable;
+}
+
+pub fn init(pool: *Pool, ally: Allocator) !void {
+    assert(pool.items.len == 0);
+
+    // Reserve index 1 for None
+    assert(try pool.get(ally, .{ .none_type = {} }) == @as(Index, @enumFromInt(1)));
 }

@@ -31,6 +31,9 @@ pub const Value = struct {
         int,
         string,
 
+        /// A builtin Zig defined function.
+        // zig_function,
+
         pub fn Type(comptime t: Tag) type {
             assert(@intFromEnum(t) >= Tag.first_payload);
 
@@ -143,6 +146,11 @@ pub const Value = struct {
                     length: u32,
                 },
             },
+        };
+
+        pub const ZigFunc = struct {
+            base: Payload,
+            data: struct {},
         };
     };
 };

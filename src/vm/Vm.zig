@@ -67,8 +67,8 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
     const allocator = arena.allocator();
     vm.allocator = allocator;
 
-    // Reserve the pool index 0 for None
-    _ = try vm.pool.get(vm.allocator, .{ .none_type = {} });
+    // Init the pool.
+    try vm.pool.init(vm.allocator);
 
     while (vm.is_running) {
         const instruction = instructions[vm.program_counter];
@@ -97,6 +97,7 @@ fn exec(vm: *Vm, i: Instruction) !void {
 
     switch (i) {
         .LoadConst => |constant| try vm.execLoadConst(constant),
+        .LoadName => |name| try vm.execLoadName(name),
         .StoreName => |name| try vm.execStoreName(name),
         .ReturnValue => try vm.execReturnValue(),
 
@@ -123,6 +124,13 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
         .None => {},
         else => std.debug.panic("TODO: execLoadConst: {s}", .{@tagName(load_const)}),
     };
+}
+
+/// Loads the given name onto the stack.
+fn execLoadName(vm: *Vm, name: []const u8) !void {
+    var val = try Value.createString(name, vm);
+    const index = try val.intern(vm);
+    try vm.stack.append(vm.allocator, index);
 }
 
 /// Creates a relation between the TOS and the store_name string.
