@@ -57,7 +57,7 @@ fn print(vm: *Vm, args: []Index) void {
     const stdout = std.io.getStdOut().writer();
 
     for (args) |arg_index| {
-        const arg = resolveArg(vm, arg_index);
+        const arg = vm.resolveArg(arg_index);
         stdout.print("{}", .{arg.fmt(vm.pool)}) catch @panic("OOM");
     }
 
@@ -84,21 +84,4 @@ fn len(vm: *Vm, args: []Index) void {
 
     var val = Value.createConst(.{ .Integer = @intCast(length) }, vm) catch @panic("OOM");
     vm.stack.append(vm.allocator, val.intern(vm) catch @panic("OOM")) catch @panic("OOM");
-}
-
-fn resolveArg(vm: *Vm, index: Index) Pool.Key {
-    const name_key = vm.pool.indexToKey(index);
-
-    const payload_index = index: {
-        switch (name_key) {
-            .string_type => |string_type| {
-                // Is this string a reference to something on the pool?
-                const string_index = vm.scope.get(string_type.get(vm.pool)) orelse index;
-                break :index string_index;
-            },
-            else => break :index index,
-        }
-    };
-
-    return vm.pool.indexToKey(payload_index);
 }

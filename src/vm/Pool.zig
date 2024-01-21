@@ -6,6 +6,8 @@ const Hash = std.hash.XxHash3;
 
 const Vm = @import("Vm.zig");
 
+const Value = @import("object.zig").Value;
+
 const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
 const BigIntManaged = std.math.big.int.Managed;
@@ -69,7 +71,7 @@ pub const Tag = enum(u8) {
     ///
     /// Data is index into decls which stores an ArrayList of the child Indices.
     ///
-    /// Member functions are kept in the Object side.
+    /// It's member functions are stored in the Key.
     list,
 
     /// None type.
@@ -119,6 +121,25 @@ pub const Key = union(enum) {
 
     pub const List = struct {
         items: std.ArrayListUnmanaged(Index),
+
+        // args[0] is Self.
+        pub const MemberFns = &.{
+            .{ "append", append },
+        };
+
+        fn append(vm: *Vm, args: []Index) void {
+            if (args.len != 2) std.debug.panic("list.append() takes exactly 1 argument ({d} given)", .{args.len - 1});
+
+            const self_index = args[0];
+            const self_key = vm.resolveArg(self_index);
+            const self = self_key.list_type;
+            _ = self;
+
+            // Append here
+
+            var return_val = Value.Tag.init(.none);
+            vm.stack.append(vm.allocator, return_val.intern(vm) catch @panic("OOM")) catch @panic("OOM");
+        }
     };
 
     pub const ZigFunc = struct {
@@ -193,6 +214,26 @@ pub const Key = union(enum) {
             },
             .none_type => unreachable,
         }
+    }
+
+    /// Will intern the function for you.
+    pub fn getMember(key: Key, name: []const u8, vm: *Vm) !?Index {
+        const member_list =
+            switch (key) {
+            .list_type => Key.List.MemberFns,
+            else => std.debug.panic("{s} has no member functions", .{@tagName(key)}),
+        };
+
+        inline for (member_list) |func| {
+            if (std.mem.eql(u8, func[0], name)) {
+                const func_ptr = func[1];
+
+                var func_val = try Value.Tag.create(.zig_function, vm.allocator, .{ .func_ptr = func_ptr });
+                return try func_val.intern(vm);
+            }
+        }
+
+        return null;
     }
 
     pub fn format(

@@ -114,9 +114,11 @@ fn exec(vm: *Vm, i: Instruction) !void {
     switch (i) {
         .LoadConst => |constant| try vm.execLoadConst(constant),
         .LoadName => |name| try vm.execLoadName(name),
+        .LoadMethod => |name| try vm.execLoadMethod(name),
         .StoreName => |name| try vm.execStoreName(name),
         .ReturnValue => try vm.execReturnValue(),
         .CallFunction => |argc| try vm.execCallFunction(argc),
+        .CallMethod => |argc| try vm.execCallMethod(argc),
         .PopTop => try vm.execPopTop(),
         .BuildList => |argc| try vm.execBuildList(argc),
 
@@ -162,6 +164,20 @@ fn execLoadName(vm: *Vm, name: []const u8) !void {
     try vm.stack.append(vm.allocator, index);
 }
 
+fn execLoadMethod(vm: *Vm, name: []const u8) !void {
+    // Where the method is stored.
+    const parent_index = vm.stack.pop();
+    const parent_key = vm.resolveArg(parent_index);
+
+    // Here we decide which of the two methods to use.
+    // For now only allow valid member function names.
+    // see: https://docs.python.org/3.10/library/dis.html#opcode-LOAD_METHOD
+    const func = try parent_key.getMember(name, vm) orelse @panic("method not found");
+
+    try vm.stack.append(vm.allocator, func);
+    try vm.stack.append(vm.allocator, parent_index);
+}
+
 /// Creates a relation between the TOS and the store_name string.
 /// This relation is stored on the Pool.
 ///
@@ -204,6 +220,26 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
     @call(.auto, func_key.zig_func_type.func_ptr, .{ vm, args });
 }
 
+fn execCallMethod(vm: *Vm, argc: usize) !void {
+    var args = try vm.allocator.alloc(Index, argc);
+
+    for (0..argc) |i| {
+        const ix = argc - i - 1;
+        const name_index = vm.stack.pop();
+        args[ix] = name_index;
+    }
+
+    const self = vm.stack.pop();
+
+    const func_index = vm.stack.pop();
+    const func_key = vm.pool.indexToKey(func_index);
+
+    @call(.auto, func_key.zig_func_type.func_ptr, .{
+        vm,
+        std.mem.concat(vm.allocator, Index, &.{ &.{self}, args }) catch @panic("OOM"),
+    });
+}
+
 fn execPopTop(vm: *Vm) !void {
     _ = vm.stack.pop();
 }
@@ -222,4 +258,21 @@ fn execBuildList(vm: *Vm, argc: u32) !void {
     });
     const index = try val.intern(vm);
     try vm.stack.append(vm.allocator, index);
+}
+
+pub fn resolveArg(vm: *Vm, index: Index) Pool.Key {
+    const name_key = vm.pool.indexToKey(index);
+
+    const payload_index = index: {
+        switch (name_key) {
+            .string_type => |string_type| {
+                // Is this string a reference to something on the scope?
+                const string_index = vm.scope.get(string_type.get(vm.pool)) orelse index;
+                break :index string_index;
+            },
+            else => break :index index,
+        }
+    };
+
+    return vm.pool.indexToKey(payload_index);
 }
