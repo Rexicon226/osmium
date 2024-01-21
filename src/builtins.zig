@@ -12,6 +12,10 @@ const Value = @import("vm/object.zig").Value;
 const Vm = @import("vm/Vm.zig");
 const fatal = @import("panic.zig").fatal;
 
+pub const BuiltinError = error{OutOfMemory};
+
+pub const func_proto = fn (*Vm, []Index) BuiltinError!void;
+
 pub const builtin_fns = &.{
     // // zig fmt: off
     // .{ "abs", abs },
@@ -22,7 +26,7 @@ pub const builtin_fns = &.{
     // // zig fmt: on
 };
 
-fn abs(vm: *Vm, args: []Index) void {
+fn abs(vm: *Vm, args: []Index) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-abs", .{});
     defer t.end();
 
@@ -38,8 +42,8 @@ fn abs(vm: *Vm, args: []Index) void {
                 abs_int.abs();
 
                 // Create a new Value from this abs
-                var abs_val = Value.Tag.create(.int, vm.allocator, .{ .int = abs_int }) catch @panic("OOM");
-                const abs_index = abs_val.intern(vm) catch @panic("OOM");
+                var abs_val = try Value.Tag.create(.int, vm.allocator, .{ .int = abs_int });
+                const abs_index = try abs_val.intern(vm);
 
                 break :value abs_index;
             },
@@ -47,10 +51,10 @@ fn abs(vm: *Vm, args: []Index) void {
         }
     };
 
-    vm.stack.append(vm.allocator, index) catch @panic("OOM");
+    try vm.stack.append(vm.allocator, index);
 }
 
-fn print(vm: *Vm, args: []Index) void {
+fn print(vm: *Vm, args: []Index) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-print", .{});
     defer t.end();
 
@@ -58,16 +62,22 @@ fn print(vm: *Vm, args: []Index) void {
 
     for (args) |arg_index| {
         const arg = vm.resolveArg(arg_index);
-        stdout.print("{}", .{arg.fmt(vm.pool)}) catch @panic("OOM");
+        try printSafe(stdout, "{}", .{arg.fmt(vm.pool)});
     }
 
-    stdout.print("\n", .{}) catch @panic("OOM");
+    try printSafe(stdout, "\n", .{});
 
     var return_val = Value.Tag.init(.none);
-    vm.stack.append(vm.allocator, return_val.intern(vm) catch @panic("OOM")) catch @panic("OOM");
+    try vm.stack.append(vm.allocator, try return_val.intern(vm));
 }
 
-fn len(vm: *Vm, args: []Index) void {
+fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) BuiltinError!void {
+    writer.print(fmt, args) catch |err| {
+        fatal("{s}", .{@errorName(err)});
+    };
+}
+
+fn len(vm: *Vm, args: []Index) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-len", .{});
     defer t.end();
 
@@ -82,6 +92,6 @@ fn len(vm: *Vm, args: []Index) void {
         }
     };
 
-    var val = Value.createConst(.{ .Integer = @intCast(length) }, vm) catch @panic("OOM");
-    vm.stack.append(vm.allocator, val.intern(vm) catch @panic("OOM")) catch @panic("OOM");
+    var val = Value.createConst(.{ .Integer = @intCast(length) }, vm);
+    try vm.stack.append(vm.allocator, val.intern(vm));
 }

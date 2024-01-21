@@ -220,7 +220,7 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
     const func_key = vm.pool.indexToKey(func_index);
 
     // Call
-    @call(.auto, func_key.zig_func_type.func_ptr, .{ vm, args });
+    try @call(.auto, func_key.zig_func_type.func_ptr, .{ vm, args });
 }
 
 fn execCallMethod(vm: *Vm, argc: usize) !void {
@@ -237,7 +237,7 @@ fn execCallMethod(vm: *Vm, argc: usize) !void {
     const func_index = vm.stack.pop();
     const func_key = vm.pool.indexToKey(func_index);
 
-    @call(.auto, func_key.zig_func_type.func_ptr, .{
+    try @call(.auto, func_key.zig_func_type.func_ptr, .{
         vm,
         std.mem.concat(vm.allocator, Index, &.{ &.{self}, args }) catch @panic("OOM"),
     });

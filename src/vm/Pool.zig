@@ -5,7 +5,7 @@ const std = @import("std");
 const Hash = std.hash.XxHash3;
 
 const Vm = @import("Vm.zig");
-
+const builtins = @import("../builtins.zig");
 const Value = @import("object.zig").Value;
 
 const BigIntConst = std.math.big.int.Const;
@@ -127,7 +127,7 @@ pub const Key = union(enum) {
             .{ "append", append },
         };
 
-        fn append(vm: *Vm, args: []Index) void {
+        fn append(vm: *Vm, args: []Index) builtins.BuiltinError!void {
             if (args.len != 2) std.debug.panic("list.append() takes exactly 1 argument ({d} given)", .{args.len - 1});
 
             const self_index = args[0];
@@ -135,16 +135,16 @@ pub const Key = union(enum) {
 
             std.debug.print("Std: {}\n", .{self_key.list_type.items.items.len});
 
-            self_key.list_type.items.ensureUnusedCapacity(vm.allocator, 1) catch @panic("OOM");
+            try self_key.list_type.items.ensureUnusedCapacity(vm.allocator, 1);
             self_key.list_type.items.appendAssumeCapacity(args[1]);
 
             var return_val = Value.Tag.init(.none);
-            vm.stack.append(vm.allocator, return_val.intern(vm) catch @panic("OOM")) catch @panic("OOM");
+            try vm.stack.append(vm.allocator, try return_val.intern(vm));
         }
     };
 
     pub const ZigFunc = struct {
-        func_ptr: *const fn (*Vm, []Index) void,
+        func_ptr: *const builtins.func_proto,
     };
 
     pub fn hash32(key: Key, pool: *const Pool) u32 {
