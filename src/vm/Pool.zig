@@ -21,7 +21,7 @@ const log = std.log.scoped(.pool);
 map: std.AutoArrayHashMapUnmanaged(void, void) = .{},
 items: std.MultiArrayList(Item) = .{},
 
-decls: std.ArrayListUnmanaged(Key) = .{},
+decls: std.ArrayListUnmanaged(*Key) = .{},
 
 /// A complete array of all bytes used in the Pool.
 /// strings store a length and start index into this array.
@@ -120,7 +120,7 @@ pub const Key = union(enum) {
     };
 
     pub const List = struct {
-        items: std.ArrayListUnmanaged(Index),
+        list: std.ArrayListUnmanaged(Index),
 
         // args[0] is Self.
         pub const MemberFns = &.{
@@ -130,13 +130,9 @@ pub const Key = union(enum) {
         fn append(vm: *Vm, args: []Index) builtins.BuiltinError!void {
             if (args.len != 2) std.debug.panic("list.append() takes exactly 1 argument ({d} given)", .{args.len - 1});
 
-            const self_index = args[0];
-            const self_key = vm.resolveMutArg(self_index);
+            var self_key = vm.resolveArg(args[0]);
 
-            std.debug.print("Std: {}\n", .{self_key.list_type.items.items.len});
-
-            try self_key.list_type.items.ensureUnusedCapacity(vm.allocator, 1);
-            self_key.list_type.items.appendAssumeCapacity(args[1]);
+            try self_key.list_type.list.append(vm.allocator, args[1]);
 
             var return_val = Value.Tag.init(.none);
             try vm.stack.append(vm.allocator, try return_val.intern(vm));
@@ -165,7 +161,7 @@ pub const Key = union(enum) {
             .bool_type => |boolean| return Hash.hash(seed, asBytes(&boolean.value)),
 
             .tuple_type => |tuple| return Hash.hash(seed, asBytes(tuple.value)),
-            .list_type => |list| return Hash.hash(seed, asBytes(list.items.items)),
+            .list_type => |list| return Hash.hash(seed, asBytes(list.list.items)),
 
             .none_type => return Hash.hash(seed, &.{0x00}),
 
@@ -211,7 +207,7 @@ pub const Key = union(enum) {
             },
             .list_type => |a_info| {
                 const b_info = b.list_type;
-                return std.meta.eql(a_info.items.items, b_info.items.items);
+                return std.meta.eql(a_info.list.items, b_info.list.items);
             },
             .none_type => unreachable,
         }
@@ -289,7 +285,7 @@ pub const Key = union(enum) {
                 try writer.print(")", .{});
             },
             .list_type => |list_type| {
-                const list = list_type.items.items;
+                const list = list_type.list.items;
 
                 try writer.print("[", .{});
                 for (list, 0..) |child, i| {
@@ -322,7 +318,9 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
         .int_type => |int_type| {
             // Append the BigInt to the extras
             const index = pool.decls.items.len;
-            try pool.decls.append(ally, .{ .int_type = int_type });
+            const int = try ally.create(Key);
+            int.* = .{ .int_type = int_type };
+            try pool.decls.append(ally, int);
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .int,
@@ -331,7 +329,9 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
         },
         .string_type => |string_type| {
             const index = pool.decls.items.len;
-            try pool.decls.append(ally, .{ .string_type = string_type });
+            const string = try ally.create(Key);
+            string.* = .{ .string_type = string_type };
+            try pool.decls.append(ally, string);
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .string,
@@ -347,7 +347,9 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
 
         .tuple_type => |tuple_type| {
             const index = pool.decls.items.len;
-            try pool.decls.append(ally, .{ .tuple_type = tuple_type });
+            const tuple = try ally.create(Key);
+            tuple.* = .{ .tuple_type = tuple_type };
+            try pool.decls.append(ally, tuple);
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .tuple,
@@ -357,7 +359,9 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
 
         .list_type => |list_type| {
             const index = pool.decls.items.len;
-            try pool.decls.append(ally, .{ .list_type = list_type });
+            const list = try ally.create(Key);
+            list.* = .{ .list_type = list_type };
+            try pool.decls.append(ally, list);
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .list,
@@ -375,7 +379,9 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
         },
         .zig_func_type => |zig_func| {
             const index = pool.decls.items.len;
-            try pool.decls.append(ally, .{ .zig_func_type = zig_func });
+            const zig_func_alloc = try ally.create(Key);
+            zig_func_alloc.* = .{ .zig_func_type = zig_func };
+            try pool.decls.append(ally, zig_func_alloc);
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .zig_func,
@@ -398,7 +404,7 @@ pub const KeyAdapter = struct {
     }
 };
 
-pub fn indexToKey(pool: *const Pool, index: Index) Key {
+pub fn indexToKey(pool: *const Pool, index: Index) *Key {
     assert(index != .none);
 
     const item = pool.items.get(@intFromEnum(index));
@@ -407,18 +413,11 @@ pub fn indexToKey(pool: *const Pool, index: Index) Key {
     switch (item.tag) {
         .int => return pool.decls.items[data],
         .string => return pool.decls.items[data],
-        .boolean => {
-            const boolean = if (data == 1) true else false;
-            return .{
-                .bool_type = .{
-                    .value = boolean,
-                },
-            };
-        },
+        .boolean => unreachable,
         .tuple => return pool.decls.items[data],
         .list => return pool.decls.items[data],
 
-        .none => return .{ .none_type = {} },
+        .none => unreachable,
         .zig_func => return pool.decls.items[data],
     }
     unreachable;

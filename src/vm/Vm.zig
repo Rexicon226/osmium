@@ -232,15 +232,18 @@ fn execCallMethod(vm: *Vm, argc: usize) !void {
         args[ix] = name_index;
     }
 
-    const self = vm.stack.pop();
+    const self_index = vm.stack.pop();
 
     const func_index = vm.stack.pop();
     const func_key = vm.pool.indexToKey(func_index);
 
     try @call(.auto, func_key.zig_func_type.func_ptr, .{
         vm,
-        std.mem.concat(vm.allocator, Index, &.{ &.{self}, args }) catch @panic("OOM"),
+        std.mem.concat(vm.allocator, Index, &.{ &.{self_index}, args }) catch @panic("OOM"),
     });
+
+    const self = vm.resolveArg(self_index);
+    std.debug.print("Self: {}\n", .{self.fmt(vm.pool)});
 }
 
 fn execPopTop(vm: *Vm) !void {
@@ -259,7 +262,7 @@ fn execBuildList(vm: *Vm, argc: u32) !void {
     const list = std.ArrayListUnmanaged(Index).fromOwnedSlice(args);
 
     var val = try Value.Tag.create(.list, vm.allocator, .{
-        .items = list,
+        .list = list,
     });
     const index = try val.intern(vm);
     try vm.stack.append(vm.allocator, index);
@@ -269,7 +272,7 @@ pub fn resolveIndex(vm: *Vm, index: Index) Index {
     const name_key = vm.pool.indexToKey(index);
 
     return index: {
-        switch (name_key) {
+        switch (name_key.*) {
             .string_type => |string_type| {
                 // Is this string a reference to something on the scope?
                 const string_index = vm.scope.get(string_type.get(vm.pool)) orelse index;
@@ -280,13 +283,7 @@ pub fn resolveIndex(vm: *Vm, index: Index) Index {
     };
 }
 
-pub fn resolveArg(vm: *Vm, index: Index) Pool.Key {
+pub fn resolveArg(vm: *Vm, index: Index) *Pool.Key {
     const resolved_index = vm.resolveIndex(index);
     return vm.pool.indexToKey(resolved_index);
-}
-
-/// Returns a pointer that is only valid until the Pool is mutated.
-pub fn resolveMutArg(vm: *Vm, index: Index) *Pool.Key {
-    const resolved_index = vm.resolveIndex(index);
-    return vm.pool.indexToMutKey(resolved_index);
 }

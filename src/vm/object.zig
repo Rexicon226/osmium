@@ -165,7 +165,7 @@ pub const Value = struct {
             },
             .list => {
                 const pl = value.castTag(.list).?.data;
-                return vm.pool.get(vm.allocator, .{ .list_type = .{ .items = pl.items } });
+                return vm.pool.get(vm.allocator, .{ .list_type = .{ .list = pl.list } });
             },
 
             .zig_function => {
@@ -208,7 +208,7 @@ pub const Value = struct {
         pub const List = struct {
             base: Payload,
             data: struct {
-                items: std.ArrayListUnmanaged(Index),
+                list: std.ArrayListUnmanaged(Index),
             },
         };
 
