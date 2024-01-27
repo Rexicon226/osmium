@@ -2,7 +2,7 @@
 
 const Pool = @This();
 const std = @import("std");
-const Hash = std.hash.XxHash3;
+const Hash = std.hash.Wyhash;
 
 const Vm = @import("Vm.zig");
 const builtins = @import("../builtins.zig");
@@ -30,10 +30,21 @@ decls: std.ArrayListUnmanaged(*Key) = .{},
 /// the string into the array to share bytes between entries.
 strings: std.ArrayListUnmanaged(u8) = .{},
 
+// These won't ever actually be modified
+// this is some cursed code lmao
+pub const bool_true_ptr: *Key = @constCast(&Key{ .boolean = .True });
+pub const bool_false_ptr: *Key = @constCast(&Key{ .boolean = .True });
+pub const none_ptr: *Key = @constCast(&Key{ .none = {} });
+
 /// A index into the Pool map. Index 0 is none.
 pub const Index = enum(u32) {
     /// Not to be used for actual VM
-    none,
+    none = 0,
+
+    none_type = 1,
+    bool_true = 2,
+    bool_false = 3,
+
     _,
 };
 
@@ -56,12 +67,6 @@ pub const Tag = enum(u8) {
     /// `strings` arraylist.
     string,
 
-    /// Boolean type.
-    ///
-    /// Data is 0 if false, and 1 if true. This prevents us from needing to use a decl Payload.
-    /// saving memory.
-    boolean,
-
     /// Tuple type.
     ///
     /// Data is index into decls which stores the constant list of child Indices.
@@ -74,29 +79,32 @@ pub const Tag = enum(u8) {
     /// It's member functions are stored in the Key.
     list,
 
-    /// None type.
-    /// This is the literal "None" type from Python.
-    ///
-    /// Data is void, as it has no data.
-    none,
-
     /// A Zig function.
     ///
     /// Data is a pointer to a standarized interface for builtins.
     zig_func,
+
+    /// A throw-away tag for completely pre-defined values.
+    static_value,
 };
 
 pub const Key = union(enum) {
-    int_type: Int,
-    string_type: String,
-    bool_type: Bool,
+    int: Int,
+    string: String,
 
-    tuple_type: Tuple,
-    list_type: List,
+    tuple: Tuple,
+    list: List,
 
-    zig_func_type: ZigFunc,
+    zig_func: ZigFunc,
 
-    none_type: void,
+    boolean: Boolean,
+
+    none: void,
+
+    pub const Boolean = enum {
+        True,
+        False,
+    };
 
     pub const Int = struct {
         value: BigIntManaged,
@@ -109,10 +117,6 @@ pub const Key = union(enum) {
         pub fn get(self: *const String, pool: Pool) []const u8 {
             return pool.strings.items[self.start .. self.start + self.length];
         }
-    };
-
-    pub const Bool = struct {
-        value: bool,
     };
 
     pub const Tuple = struct {
@@ -132,7 +136,7 @@ pub const Key = union(enum) {
 
             var self_key = vm.resolveArg(args[0]);
 
-            try self_key.list_type.list.append(vm.allocator, args[1]);
+            try self_key.list.list.append(vm.allocator, args[1]);
 
             var return_val = Value.Tag.init(.none);
             try vm.stack.append(vm.allocator, try return_val.intern(vm));
@@ -153,20 +157,27 @@ pub const Key = union(enum) {
         const seed = @intFromEnum(@as(KeyTag, key));
 
         switch (key) {
-            .int_type => |int| return Hash.hash(seed, asBytes(&int.value)),
-            .string_type => |string| {
+            .int => |int| return Hash.hash(seed, asBytes(&int.value)),
+            .string => |string| {
                 const bytes = pool.strings.items[string.start .. string.start + string.length];
                 return Hash.hash(seed, bytes);
             },
-            .bool_type => |boolean| return Hash.hash(seed, asBytes(&boolean.value)),
 
-            .tuple_type => |tuple| return Hash.hash(seed, asBytes(tuple.value)),
-            .list_type => |list| return Hash.hash(seed, asBytes(list.list.items)),
+            .tuple => |tuple| return Hash.hash(seed, asBytes(tuple.value)),
+            .list => |list| return Hash.hash(seed, asBytes(list.list.items)),
 
-            .none_type => return Hash.hash(seed, &.{0x00}),
+            // Predefined hashs for simple types.
+            .none => return Hash.hash(seed, &.{0x00}),
+
+            .boolean => |boolean| {
+                switch (boolean) {
+                    .True => return Hash.hash(seed, &.{0x01}),
+                    .False => return Hash.hash(seed, &.{0x02}),
+                }
+            },
 
             // Since we share the function pointer, we can be pretty confident that the pointer will never change.
-            .zig_func_type => |zig_func| return Hash.hash(seed, asBytes(&zig_func.func_ptr)),
+            .zig_func => |zig_func| return Hash.hash(seed, asBytes(&zig_func.func_ptr)),
         }
     }
 
@@ -178,38 +189,39 @@ pub const Key = union(enum) {
         if (a_tag != b_tag) return false;
 
         switch (a) {
-            .int_type => |a_info| {
-                const b_info = b.int_type;
+            .int => |a_info| {
+                const b_info = b.int;
                 return std.meta.eql(a_info, b_info);
             },
-            .string_type => |a_info| {
-                const b_info = b.string_type;
+            .string => |a_info| {
+                const b_info = b.string;
                 // We don't need to check if the actual string is equal, that too expensive.
                 // We can just check if the start and length is the same, which will always lead
                 // to the same string.
                 return (a_info.start == b_info.start and a_info.length == b_info.length);
             },
-            .zig_func_type => |a_info| {
-                const b_info = b.zig_func_type;
+            .zig_func => |a_info| {
+                const b_info = b.zig_func;
 
                 // Again, since we are pretty confident that the function pointers aren't going to be changing,
                 // we can just compare them.
                 return (a_info.func_ptr == b_info.func_ptr);
             },
-            .bool_type => |a_info| {
-                const b_info = b.bool_type;
-
-                return a_info.value == b_info.value;
-            },
-            .tuple_type => |a_info| {
-                const b_info = b.tuple_type;
+            .tuple => |a_info| {
+                const b_info = b.tuple;
                 return std.meta.eql(a_info, b_info);
             },
-            .list_type => |a_info| {
-                const b_info = b.list_type;
+            .list => |a_info| {
+                const b_info = b.list;
                 return std.meta.eql(a_info.list.items, b_info.list.items);
             },
-            .none_type => unreachable,
+
+            .boolean => |a_info| {
+                const b_info = b.boolean;
+                return a_info == b_info;
+            },
+
+            .none => return true,
         }
     }
 
@@ -217,7 +229,7 @@ pub const Key = union(enum) {
     pub fn getMember(key: Key, name: []const u8, vm: *Vm) !?Index {
         const member_list =
             switch (key) {
-            .list_type => Key.List.MemberFns,
+            .list => Key.List.MemberFns,
             else => std.debug.panic("{s} has no member functions", .{@tagName(key)}),
         };
 
@@ -262,30 +274,30 @@ pub const Key = union(enum) {
         const pool = ctx.pool;
 
         switch (key) {
-            .string_type => |string_key| {
+            .string => |string_key| {
                 const bytes = string_key.get(pool);
                 try writer.print("'{s}'", .{bytes});
             },
-            .int_type => |int_type| {
-                try writer.print("{}", .{int_type.value});
+            .int => |int| {
+                try writer.print("{}", .{int.value});
             },
-            .bool_type => |bool_type| {
-                try writer.print("{s}", .{if (bool_type.value) "True" else "False"});
-            },
-            .tuple_type => |tuple_type| {
-                const tuples = tuple_type.value;
+
+            .boolean => |boolean| try writer.writeAll(@tagName(boolean)),
+
+            .tuple => |tuple| {
+                const tuples = tuple.value;
 
                 try writer.print("(", .{});
-                for (tuples, 0..) |tuple, i| {
-                    const tuple_key = pool.indexToKey(tuple);
+                for (tuples, 0..) |tuple_, i| {
+                    const tuple_key = pool.indexToKey(tuple_);
                     try writer.print("{}", .{tuple_key.fmt(pool)});
 
                     if (i < tuples.len - 1) try writer.print(", ", .{});
                 }
                 try writer.print(")", .{});
             },
-            .list_type => |list_type| {
-                const list = list_type.list.items;
+            .list => |list_| {
+                const list = list_.list.items;
 
                 try writer.print("[", .{});
                 for (list, 0..) |child, i| {
@@ -296,6 +308,8 @@ pub const Key = union(enum) {
                 }
                 try writer.print("]", .{});
             },
+
+            .none => try writer.writeAll("None"),
 
             else => |else_case| try writer.print("TODO: {s}", .{@tagName(else_case)}),
         }
@@ -315,41 +329,34 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
     try pool.items.ensureUnusedCapacity(ally, 1);
 
     switch (key) {
-        .int_type => |int_type| {
+        .int => |int| {
             // Append the BigInt to the extras
             const index = pool.decls.items.len;
-            const int = try ally.create(Key);
-            int.* = .{ .int_type = int_type };
-            try pool.decls.append(ally, int);
+            const int_key = try ally.create(Key);
+            int_key.* = .{ .int = int };
+            try pool.decls.append(ally, int_key);
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .int,
                 .data = @intCast(index),
             });
         },
-        .string_type => |string_type| {
+        .string => |string| {
             const index = pool.decls.items.len;
-            const string = try ally.create(Key);
-            string.* = .{ .string_type = string_type };
-            try pool.decls.append(ally, string);
+            const string_key = try ally.create(Key);
+            string_key.* = .{ .string = string };
+            try pool.decls.append(ally, string_key);
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .string,
                 .data = @intCast(index),
             });
         },
-        .bool_type => |bool_type| {
-            pool.items.appendAssumeCapacity(.{
-                .tag = .boolean,
-                .data = @intFromBool(bool_type.value),
-            });
-        },
-
-        .tuple_type => |tuple_type| {
+        .tuple => |tuple| {
             const index = pool.decls.items.len;
-            const tuple = try ally.create(Key);
-            tuple.* = .{ .tuple_type = tuple_type };
-            try pool.decls.append(ally, tuple);
+            const tuple_key = try ally.create(Key);
+            tuple_key.* = .{ .tuple = tuple };
+            try pool.decls.append(ally, tuple_key);
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .tuple,
@@ -357,38 +364,57 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
             });
         },
 
-        .list_type => |list_type| {
+        .list => |list| {
             const index = pool.decls.items.len;
-            const list = try ally.create(Key);
-            list.* = .{ .list_type = list_type };
-            try pool.decls.append(ally, list);
+            const list_key = try ally.create(Key);
+            list_key.* = .{ .list = list };
+            try pool.decls.append(ally, list_key);
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .list,
                 .data = @intCast(index),
             });
         },
-
-        // Always stored at Index 1
-        .none_type => {
-            pool.items.appendAssumeCapacity(.{
-                .tag = .none,
-                .data = 0,
-            });
-            return @enumFromInt(1);
-        },
-        .zig_func_type => |zig_func| {
+        .zig_func => |zig_func| {
             const index = pool.decls.items.len;
-            const zig_func_alloc = try ally.create(Key);
-            zig_func_alloc.* = .{ .zig_func_type = zig_func };
-            try pool.decls.append(ally, zig_func_alloc);
+            const zig_func_key = try ally.create(Key);
+            zig_func_key.* = .{ .zig_func = zig_func };
+            try pool.decls.append(ally, zig_func_key);
+
+            std.debug.print("Len: {}\n", .{pool.items.len});
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .zig_func,
                 .data = @intCast(index),
             });
         },
+
+        .none => {
+            // pool.get will short cut here, but we will need to add
+            // some padding to make sure future ones aren't here
+            pool.items.appendAssumeCapacity(.{
+                .tag = .static_value,
+                .data = undefined,
+            });
+        },
+        .boolean => |boolean| {
+            switch (boolean) {
+                .True => {
+                    pool.items.appendAssumeCapacity(.{
+                        .tag = .static_value,
+                        .data = undefined,
+                    });
+                },
+                .False => {
+                    pool.items.appendAssumeCapacity(.{
+                        .tag = .static_value,
+                        .data = undefined,
+                    });
+                },
+            }
+        },
     }
+
     return @enumFromInt(pool.items.len - 1);
 }
 
@@ -407,18 +433,24 @@ pub const KeyAdapter = struct {
 pub fn indexToKey(pool: *const Pool, index: Index) *Key {
     assert(index != .none);
 
+    // static_value shortcut
+    switch (@intFromEnum(index)) {
+        1 => return none_ptr,
+        2 => return bool_true_ptr,
+        3 => return bool_false_ptr,
+        else => {},
+    }
+
     const item = pool.items.get(@intFromEnum(index));
     const data = item.data;
 
     switch (item.tag) {
         .int => return pool.decls.items[data],
         .string => return pool.decls.items[data],
-        .boolean => unreachable,
         .tuple => return pool.decls.items[data],
         .list => return pool.decls.items[data],
-
-        .none => unreachable,
         .zig_func => return pool.decls.items[data],
+        .static_value => unreachable,
     }
     unreachable;
 }
@@ -440,9 +472,28 @@ pub fn indexToMutKey(pool: *const Pool, index: Index) *Key {
     unreachable;
 }
 
+pub const static_keys = [_]Key{
+    .none,
+    .{ .boolean = .True },
+    .{ .boolean = .False },
+};
+
 pub fn init(pool: *Pool, ally: Allocator) !void {
     assert(pool.items.len == 0);
 
-    // Reserve index 1 for None
-    assert(try pool.get(ally, .{ .none_type = {} }) == @as(Index, @enumFromInt(1)));
+    try pool.items.ensureUnusedCapacity(ally, static_keys.len);
+    try pool.map.ensureUnusedCapacity(ally, static_keys.len);
+
+    // A bit of a hack, need to append a undefined value for Index(0) none
+    try pool.items.append(ally, undefined);
+
+    for (static_keys) |key| {
+        const index = pool.get(ally, key) catch unreachable;
+        std.debug.print("Index: {}\n", .{@intFromEnum(index)});
+    }
+
+    assert(pool.indexToKey(.bool_true).boolean == .True);
+    assert(pool.indexToKey(.bool_false).boolean == .True);
+
+    assert(pool.items.len == static_keys.len + 1);
 }

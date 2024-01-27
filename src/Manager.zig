@@ -69,7 +69,7 @@ pub fn run_file(manager: *Manager, file_name: []const u8) !void {
     );
 
     // Hash the source
-    const source_hash = std.hash.XxHash3.hash(1, source);
+    const source_hash = std.hash.Wyhash.hash(1, source);
 
     log.debug("Hash: {x}\n", .{source_hash});
 

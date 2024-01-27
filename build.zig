@@ -32,6 +32,13 @@ pub fn build(b: *std.Build) void {
         ) orelse backend;
     }
 
+    const use_llvm = b.option(bool, "use-llvm",
+        \\Uses llvm to compile Osmium. Default true.
+    ) orelse true;
+
+    exe.use_llvm = use_llvm;
+    exe.use_lld = use_llvm;
+
     const exe_options = b.addOptions();
 
     exe_options.addOption(bool, "trace", trace orelse false);

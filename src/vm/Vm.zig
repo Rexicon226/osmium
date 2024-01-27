@@ -82,6 +82,8 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
         );
         const func_index = try func_val.intern(vm);
 
+        std.debug.print("Index: {}\n", .{@intFromEnum(func_index)});
+
         // Add to the scope.
         try vm.scope.put(vm.allocator, name, func_index);
     }
@@ -130,7 +132,6 @@ fn exec(vm: *Vm, i: Instruction) !void {
 fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
     return switch (load_const) {
         inline .Integer,
-        .Boolean,
         .String,
         => {
             var val = try Value.createConst(load_const, vm);
@@ -151,8 +152,13 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
             try vm.stack.append(vm.allocator, index);
         },
 
-        .None => {
-            try vm.stack.append(vm.allocator, @enumFromInt(1));
+        .None => try vm.stack.append(vm.allocator, @enumFromInt(1)),
+        .Boolean => |boolean| {
+            if (boolean) {
+                try vm.stack.append(vm.allocator, @enumFromInt(2));
+            } else {
+                try vm.stack.append(vm.allocator, @enumFromInt(3));
+            }
         },
     };
 }
@@ -211,7 +217,7 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
     const name_index = vm.stack.pop();
     const name_key = vm.pool.indexToKey(name_index);
 
-    const name = name_key.string_type.get(vm.pool);
+    const name = name_key.string.get(vm.pool);
 
     // Get the name from the scope.
     const func_index = vm.scope.get(name) orelse @panic("could not find CallFunction");
@@ -220,7 +226,7 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
     const func_key = vm.pool.indexToKey(func_index);
 
     // Call
-    try @call(.auto, func_key.zig_func_type.func_ptr, .{ vm, args });
+    try @call(.auto, func_key.zig_func.func_ptr, .{ vm, args });
 }
 
 fn execCallMethod(vm: *Vm, argc: usize) !void {
@@ -237,7 +243,7 @@ fn execCallMethod(vm: *Vm, argc: usize) !void {
     const func_index = vm.stack.pop();
     const func_key = vm.pool.indexToKey(func_index);
 
-    try @call(.auto, func_key.zig_func_type.func_ptr, .{
+    try @call(.auto, func_key.zig_func.func_ptr, .{
         vm,
         std.mem.concat(vm.allocator, Index, &.{ &.{self_index}, args }) catch @panic("OOM"),
     });
@@ -273,9 +279,9 @@ pub fn resolveIndex(vm: *Vm, index: Index) Index {
 
     return index: {
         switch (name_key.*) {
-            .string_type => |string_type| {
+            .string => |string| {
                 // Is this string a reference to something on the scope?
-                const string_index = vm.scope.get(string_type.get(vm.pool)) orelse index;
+                const string_index = vm.scope.get(string.get(vm.pool)) orelse index;
                 break :index string_index;
             },
             else => break :index index,

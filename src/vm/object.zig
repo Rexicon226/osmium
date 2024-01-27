@@ -145,32 +145,28 @@ pub const Value = struct {
         switch (t) {
             .int => {
                 const pl = value.castTag(.int).?.data;
-                return vm.pool.get(vm.allocator, .{ .int_type = .{ .value = pl.int } });
+                return vm.pool.get(vm.allocator, .{ .int = .{ .value = pl.int } });
             },
             .string => {
                 const pl = value.castTag(.string).?.data;
-                return vm.pool.get(vm.allocator, .{ .string_type = .{
+                return vm.pool.get(vm.allocator, .{ .string = .{
                     .start = pl.string.start,
                     .length = pl.string.length,
                 } });
             },
-            .boolean => {
-                const pl = value.castTag(.boolean).?.data;
-                return vm.pool.get(vm.allocator, .{ .bool_type = .{ .value = pl.boolean } });
-            },
 
             .tuple => {
                 const pl = value.castTag(.tuple).?.data;
-                return vm.pool.get(vm.allocator, .{ .tuple_type = .{ .value = pl } });
+                return vm.pool.get(vm.allocator, .{ .tuple = .{ .value = pl } });
             },
             .list => {
                 const pl = value.castTag(.list).?.data;
-                return vm.pool.get(vm.allocator, .{ .list_type = .{ .list = pl.list } });
+                return vm.pool.get(vm.allocator, .{ .list = .{ .list = pl.list } });
             },
 
             .zig_function => {
                 const pl = value.castTag(.zig_function).?.data;
-                return vm.pool.get(vm.allocator, .{ .zig_func_type = .{
+                return vm.pool.get(vm.allocator, .{ .zig_func = .{
                     .func_ptr = pl.func_ptr,
                 } });
             },
@@ -178,6 +174,14 @@ pub const Value = struct {
             // Can't intern none, it's an immediate value.
             // We reserve the pool index 1 for None.
             .none => return @enumFromInt(1),
+            .boolean => {
+                const pl = value.castTag(.boolean).?.data;
+                if (pl.boolean) {
+                    return @enumFromInt(2);
+                } else {
+                    return @enumFromInt(3);
+                }
+            },
         }
     }
 

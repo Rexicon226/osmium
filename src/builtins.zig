@@ -37,7 +37,7 @@ fn abs(vm: *Vm, args: []Index) BuiltinError!void {
 
     const index = value: {
         switch (arg) {
-            .int_type => |int| {
+            .int => |int| {
                 var abs_int = int.value;
                 abs_int.abs();
 
@@ -73,7 +73,7 @@ fn print(vm: *Vm, args: []Index) BuiltinError!void {
 
 fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) BuiltinError!void {
     writer.print(fmt, args) catch |err| {
-        fatal("{s}", .{@errorName(err)});
+        fatal("error: {s}", .{@errorName(err)});
     };
 }
 
@@ -87,7 +87,7 @@ fn len(vm: *Vm, args: []Index) BuiltinError!void {
 
     const length = length: {
         switch (arg) {
-            .string_type => |string| break :length string.length,
+            .string => |string| break :length string.length,
             else => fatal("cannot len() on type: {s}", .{@tagName(arg)}),
         }
     };
