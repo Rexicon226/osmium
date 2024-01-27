@@ -16,13 +16,11 @@ pub const BuiltinError = error{OutOfMemory};
 
 pub const func_proto = fn (*Vm, []Index) BuiltinError!void;
 
+/// https://docs.python.org/3.10/library/functions.html
 pub const builtin_fns = &.{
     // // zig fmt: off
-    // .{ "abs", abs },
-    // .{ "bin", bin },
+    .{ "abs", abs },
     .{ "print", print },
-    // .{ "len", len },
-    // .{ "range", range },
     // // zig fmt: on
 };
 
@@ -33,10 +31,10 @@ fn abs(vm: *Vm, args: []Index) BuiltinError!void {
     if (args.len != 1) fatal("abs() takes exactly one argument ({d} given)", .{args.len});
 
     const arg_index = args[0];
-    const arg = vm.pool.indexToKey(arg_index);
+    const arg = vm.resolveArg(arg_index);
 
     const index = value: {
-        switch (arg) {
+        switch (arg.*) {
             .int => |int| {
                 var abs_int = int.value;
                 abs_int.abs();
@@ -47,7 +45,7 @@ fn abs(vm: *Vm, args: []Index) BuiltinError!void {
 
                 break :value abs_index;
             },
-            else => fatal("cannot abs() on type: {s}", .{@tagName(arg)}),
+            else => fatal("cannot abs() on type: {s}", .{@tagName(arg.*)}),
         }
     };
 
@@ -62,36 +60,17 @@ fn print(vm: *Vm, args: []Index) BuiltinError!void {
 
     for (args) |arg_index| {
         const arg = vm.resolveArg(arg_index);
-        try printSafe(stdout, "{}", .{arg.fmt(vm.pool)});
+        printSafe(stdout, "{}", .{arg.fmt(vm.pool)});
     }
 
-    try printSafe(stdout, "\n", .{});
+    printSafe(stdout, "\n", .{});
 
     var return_val = Value.Tag.init(.none);
     try vm.stack.append(vm.allocator, try return_val.intern(vm));
 }
 
-fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) BuiltinError!void {
+fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
     writer.print(fmt, args) catch |err| {
         fatal("error: {s}", .{@errorName(err)});
     };
-}
-
-fn len(vm: *Vm, args: []Index) BuiltinError!void {
-    const t = tracer.trace(@src(), "builtin-len", .{});
-    defer t.end();
-
-    if (args.len != 1) fatal("len() takes exactly one argument ({d} given)", .{args.len});
-
-    const arg = args[0];
-
-    const length = length: {
-        switch (arg) {
-            .string => |string| break :length string.length,
-            else => fatal("cannot len() on type: {s}", .{@tagName(arg)}),
-        }
-    };
-
-    var val = Value.createConst(.{ .Integer = @intCast(length) }, vm);
-    try vm.stack.append(vm.allocator, val.intern(vm));
 }

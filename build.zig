@@ -1,10 +1,12 @@
 const std = @import("std");
 
+const cases = @import("tests/cases.zig");
+
 var trace: ?bool = false;
 var @"enable-bench": ?bool = false;
 var backend: TraceBackend = .None;
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -53,6 +55,7 @@ pub fn build(b: *std.Build) void {
     // exe.linkLibC(); // Needs libc.
 
     b.installArtifact(exe);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 
@@ -63,19 +66,13 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const exe_unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/tests.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
-    const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&run_exe_unit_tests.step);
-
     // Generate steps
     const opcode_step = b.step("opcode", "Generate opcodes");
     generateOpCode(b, opcode_step, target);
+
+    // Test cases
+    const test_step = b.step("test", "Test Osmium");
+    try cases.addCases(b, exe, test_step);
 }
 
 const TraceBackend = enum {

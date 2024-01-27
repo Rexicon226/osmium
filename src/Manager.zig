@@ -56,39 +56,32 @@ pub fn run_pyc(manager: *Manager, file_name: []const u8) !void {
 }
 
 pub fn run_file(manager: *Manager, file_name: []const u8) !void {
-    const source_file = try std.fs.cwd().openFile(file_name, .{});
+    _ = std.ChildProcess.run(.{
+        .allocator = manager.allocator,
+        .argv = &.{
+            "python3.10",
+            "-m",
+            "py_compile",
+            file_name,
+        },
+        .cwd = ".",
+        .expand_arg0 = .expand,
+    }) catch @panic("failed to side-run python");
 
-    const source_file_size = (try source_file.stat()).size;
+    // This outputs to __pycache__/file_name.cpython-310.pyc
+    const output_file_name: []const u8 = name: {
+        const trimmed_name: []const u8 = std.mem.trim(u8, file_name, ".py");
+        const output_file = std.fs.path.basename(trimmed_name);
 
-    const source = try source_file.readToEndAllocOptions(
-        manager.allocator,
-        source_file_size,
-        source_file_size,
-        @alignOf(u8),
-        0,
-    );
+        const output_dir = std.fs.path.dirname(trimmed_name) orelse @panic("why in root");
 
-    // Hash the source
-    const source_hash = std.hash.Wyhash.hash(1, source);
+        const output_pyc = try std.fmt.allocPrint(manager.allocator, "{s}/__pycache__/{s}.cpython-310.pyc", .{ output_dir, output_file });
 
-    log.debug("Hash: {x}\n", .{source_hash});
-
-    const user = std.os.getenv("USER") orelse @panic("USER env not found");
-    const cache_dir = std.fs.makeDirAbsolute(
-        try std.fmt.allocPrint(manager.allocator, "/home/{s}/.cache/osmium", .{user}),
-    ) catch |err| {
-        switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        }
+        break :name output_pyc;
     };
-    _ = cache_dir; // autofix
 
-    const cached_pyc_name = try std.fmt.allocPrint(manager.allocator, "{x}.pyc", .{source_hash});
-    _ = cached_pyc_name; // autofix
+    log.debug("File: {s}", .{output_file_name});
 
-    // We just piggy back off of the python parser.
-    const argv = [_:null]?[*:0]const u8{ "-m", "compileall", try manager.allocator.dupeZ(u8, file_name) };
-
-    return std.os.execvpeZ("python", &argv, @ptrCast(std.os.environ));
+    // Run python on that.
+    try manager.run_pyc(output_file_name);
 }

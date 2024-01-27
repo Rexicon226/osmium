@@ -139,7 +139,7 @@ fn versionPrint() void {
     const stdout = std.io.getStdOut().writer();
 
     stdout.print("Osmium {s}, created by David Rubin\n", .{version}) catch |err| {
-        std.debug.panic("Failed to print version: {}\n", .{err});
+        std.debug.panic("Failed to print version: {s}\n", .{@errorName(err)});
     };
 }
 

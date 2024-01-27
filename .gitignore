@@ -3,3 +3,6 @@ zig-out/
 temp/
 .vscode/
 traces/
+
+# Don't want any artifacts
+**/__pycache__
