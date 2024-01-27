@@ -87,6 +87,9 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                     .Bool => |boolean| Instruction{
                         .LoadConst = .{ .Boolean = boolean },
                     },
+                    .Float => |float| Instruction{
+                        .LoadConst = .{ .Float = float },
+                    },
                     else => |panic_op| std.debug.panic(
                         "cannot load inst {s}",
                         .{@tagName(panic_op)},
@@ -280,6 +283,7 @@ pub const Instruction = union(enum) {
     pub const Constant = union(enum) {
         String: []const u8,
         Integer: i32,
+        Float: f64,
         Tuple: []const Constant,
         Boolean: bool,
         None: void,

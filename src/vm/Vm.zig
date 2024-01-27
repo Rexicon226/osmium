@@ -135,6 +135,7 @@ fn exec(vm: *Vm, i: Instruction) !void {
 fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
     return switch (load_const) {
         inline .Integer,
+        .Float,
         .String,
         => {
             var val = try Value.createConst(load_const, vm);

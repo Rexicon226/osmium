@@ -136,6 +136,13 @@ fn read_object(marshal: *Marshal) Result {
         .TYPE_TRUE => result = .{ .Bool = true },
         .TYPE_FALSE => result = .{ .Bool = false },
 
+        .TYPE_BINARY_FLOAT => {
+            const float_bytes = marshal.read_bytes(8);
+            const float: f64 = @bitCast(float_bytes[0..8].*);
+
+            result = .{ .Float = float };
+        },
+
         else => std.debug.panic(
             "Unsupported ObjType: {s}\n",
             .{@tagName(ty)},
@@ -204,6 +211,9 @@ fn read_codeobject(marshal: *Marshal) Result {
 
 pub const Result = union(enum) {
     Int: i32,
+    /// Floats are stored in 8 bytes.
+    Float: f64,
+
     String: []const u8,
     Dict: std.StringArrayHashMap(Result),
     Tuple: []const Result,

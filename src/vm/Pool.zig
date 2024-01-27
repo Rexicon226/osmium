@@ -61,6 +61,14 @@ pub const Tag = enum(u8) {
     /// BigInts already exist because this would be too expensive.
     int,
 
+    /// A Float Type.
+    /// Stored as a f64 as I think that's what python floats are?
+    ///
+    /// TODO: Explore writing some sort of BigFloat implimentation for this.
+    ///
+    /// Data is an index to decls
+    float,
+
     /// String type.
     ///
     /// Data is index into decls, which stores the coordinates of the bytes in the
@@ -90,6 +98,8 @@ pub const Tag = enum(u8) {
 
 pub const Key = union(enum) {
     int: Int,
+    float: Float,
+
     string: String,
 
     tuple: Tuple,
@@ -100,6 +110,10 @@ pub const Key = union(enum) {
     boolean: Boolean,
 
     none: void,
+
+    pub const Float = struct {
+        value: f64,
+    };
 
     pub const Boolean = enum {
         True,
@@ -159,6 +173,8 @@ pub const Key = union(enum) {
 
         switch (key) {
             .int => |int| return Hash.hash(seed, asBytes(&int.value)),
+            .float => |float| return Hash.hash(seed, asBytes(&float.value)),
+
             .string => |string| {
                 const bytes = pool.strings.items[string.start .. string.start + string.length];
                 return Hash.hash(seed, bytes);
@@ -192,6 +208,10 @@ pub const Key = union(enum) {
         switch (a) {
             .int => |a_info| {
                 const b_info = b.int;
+                return std.meta.eql(a_info, b_info);
+            },
+            .float => |a_info| {
+                const b_info = b.float;
                 return std.meta.eql(a_info, b_info);
             },
             .string => |a_info| {
@@ -282,6 +302,9 @@ pub const Key = union(enum) {
             .int => |int| {
                 try writer.print("{}", .{int.value});
             },
+            .float => |float| {
+                try writer.print("{}", .{float.value});
+            },
 
             .boolean => |boolean| try writer.writeAll(@tagName(boolean)),
 
@@ -312,7 +335,7 @@ pub const Key = union(enum) {
 
             .none => try writer.writeAll("None"),
 
-            else => |else_case| try writer.print("TODO: {s}", .{@tagName(else_case)}),
+            else => |else_case| try writer.print("TODO: format Key {s}", .{@tagName(else_case)}),
         }
     }
 
@@ -339,6 +362,17 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
 
             pool.items.appendAssumeCapacity(.{
                 .tag = .int,
+                .data = @intCast(index),
+            });
+        },
+        .float => |float| {
+            const index = pool.decls.items.len;
+            const float_key = try ally.create(Key);
+            float_key.* = .{ .float = float };
+            try pool.decls.append(ally, float_key);
+
+            pool.items.appendAssumeCapacity(.{
+                .tag = .float,
                 .data = @intCast(index),
             });
         },
@@ -444,11 +478,13 @@ pub fn indexToKey(pool: *const Pool, index: Index) *Key {
     const data = item.data;
 
     switch (item.tag) {
-        .int => return pool.decls.items[data],
-        .string => return pool.decls.items[data],
-        .tuple => return pool.decls.items[data],
-        .list => return pool.decls.items[data],
-        .zig_func => return pool.decls.items[data],
+        .int,
+        .float,
+        .string,
+        .tuple,
+        .list,
+        .zig_func,
+        => return pool.decls.items[data],
         .static_value => unreachable,
     }
     unreachable;

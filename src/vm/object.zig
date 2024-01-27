@@ -31,6 +31,8 @@ pub const Value = struct {
         none,
 
         int,
+        float,
+
         string,
         boolean,
         tuple,
@@ -44,6 +46,7 @@ pub const Value = struct {
 
             return switch (t) {
                 .int,
+                .float,
                 .string,
                 .boolean,
                 => Payload.Value,
@@ -132,6 +135,9 @@ pub const Value = struct {
             .String => |string| {
                 return try Value.createString(string, vm);
             },
+            .Float => |float| {
+                return try Value.Tag.create(.float, vm.allocator, .{ .float = float });
+            },
             else => std.debug.panic("TODO: createConst {s}", .{@tagName(constant)}),
         }
     }
@@ -146,6 +152,10 @@ pub const Value = struct {
             .int => {
                 const pl = value.castTag(.int).?.data;
                 return vm.pool.get(vm.allocator, .{ .int = .{ .value = pl.int } });
+            },
+            .float => {
+                const pl = value.castTag(.float).?.data;
+                return vm.pool.get(vm.allocator, .{ .float = .{ .value = pl.float } });
             },
             .string => {
                 const pl = value.castTag(.string).?.data;
@@ -192,6 +202,7 @@ pub const Value = struct {
             base: Payload,
             data: union(enum) {
                 int: BigIntManaged,
+                float: f64,
 
                 /// The actual bytes are stored in the pool.strings array.
                 /// access with pool.strings.items[start..start + length].
