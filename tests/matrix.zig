@@ -121,11 +121,14 @@ const TestManifest = struct {
 
         // Any subsequent line until a blank comment line is key=value(s) pair
         while (it.next()) |line| {
-            const trimmed = std.mem.trim(u8, line[2..], " \t");
-            if (trimmed.len == 0) break;
+            // We don't trim, this might make it more difficult to write tests
+            // but it's harder to get python to not print random whitespaces sometimes
+
+            // const trimmed = std.mem.trim(u8, line[2..], " \t");
+            // if (trimmed.len == 0) break;
 
             // Parse key=value(s)
-            var kv_it = std.mem.splitScalar(u8, trimmed, '=');
+            var kv_it = std.mem.splitScalar(u8, line[2..], '=');
             const key = kv_it.first();
             try manifest.config_map.putNoClobber(key, kv_it.next() orelse return error.MissingValuesForConfig);
         }

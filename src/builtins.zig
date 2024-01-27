@@ -12,9 +12,11 @@ const Value = @import("vm/object.zig").Value;
 const Vm = @import("vm/Vm.zig");
 const fatal = @import("panic.zig").fatal;
 
+pub const KW_Type = std.StringArrayHashMap(Index);
+
 pub const BuiltinError = error{OutOfMemory};
 
-pub const func_proto = fn (*Vm, []Index) BuiltinError!void;
+pub const func_proto = fn (*Vm, []Index, kw: ?KW_Type) BuiltinError!void;
 
 /// https://docs.python.org/3.10/library/functions.html
 pub const builtin_fns = &.{
@@ -25,7 +27,8 @@ pub const builtin_fns = &.{
     // // zig fmt: on
 };
 
-fn abs(vm: *Vm, args: []Index) BuiltinError!void {
+fn abs(vm: *Vm, args: []Index, kw: ?KW_Type) BuiltinError!void {
+    _ = kw;
     const t = tracer.trace(@src(), "builtin-abs", .{});
     defer t.end();
 
@@ -53,7 +56,7 @@ fn abs(vm: *Vm, args: []Index) BuiltinError!void {
     try vm.stack.append(vm.allocator, index);
 }
 
-fn print(vm: *Vm, args: []Index) BuiltinError!void {
+fn print(vm: *Vm, args: []Index, maybe_kw: ?KW_Type) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-print", .{});
     defer t.end();
 
@@ -66,7 +69,24 @@ fn print(vm: *Vm, args: []Index) BuiltinError!void {
         if (i < args.len - 1) printSafe(stdout, " ", .{});
     }
 
-    printSafe(stdout, "\n", .{});
+    // If there's an "end" kw, it overrides this last print.
+    const end_print: []const u8 = end_print: {
+        if (maybe_kw) |kw| {
+            const maybe_print_override = kw.get("end");
+
+            if (maybe_print_override) |print_override| {
+                const val = vm.resolveArg(print_override);
+                if (val.* != .string) fatal("print(end=) must be a string type", .{});
+                break :end_print val.string.get(vm.pool);
+            }
+
+            break :end_print "\n";
+        } else {
+            break :end_print "\n";
+        }
+    };
+
+    printSafe(stdout, "{s}", .{end_print});
 
     var return_val = Value.Tag.init(.none);
     try vm.stack.append(vm.allocator, try return_val.intern(vm));
@@ -79,7 +99,8 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
 }
 
 /// https://docs.python.org/3.10/library/stdtypes.html#truth
-fn boolBuiltin(vm: *Vm, args: []Index) BuiltinError!void {
+fn boolBuiltin(vm: *Vm, args: []Index, kw: ?KW_Type) BuiltinError!void {
+    _ = kw;
     const t = tracer.trace(@src(), "builtin-bool", .{});
     defer t.end();
 

@@ -131,7 +131,8 @@ pub const Key = union(enum) {
             .{ "append", append },
         };
 
-        fn append(vm: *Vm, args: []Index) builtins.BuiltinError!void {
+        fn append(vm: *Vm, args: []Index, kw: ?builtins.KW_Type) builtins.BuiltinError!void {
+            _ = kw;
             if (args.len != 2) std.debug.panic("list.append() takes exactly 1 argument ({d} given)", .{args.len - 1});
 
             var self_key = vm.resolveArg(args[0]);

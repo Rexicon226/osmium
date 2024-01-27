@@ -219,7 +219,7 @@ pub const Value = struct {
         pub const ZigFunc = struct {
             base: Payload,
             data: struct {
-                func_ptr: *const fn (*Vm, []Pool.Index) builtins.BuiltinError!void,
+                func_ptr: *const fn (*Vm, []Pool.Index, ?std.StringArrayHashMap(Index)) builtins.BuiltinError!void,
             },
         };
     };

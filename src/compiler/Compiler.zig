@@ -120,6 +120,14 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 cursor += 2;
             },
 
+            .CALL_FUNCTION_KW => {
+                // Number of arguments above this object on the stack.
+                const argc = bytes[cursor + 1];
+                const inst = Instruction{ .CallFunctionKW = argc };
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
             // Used for optimizations, literally does nothing.
             .NOP => cursor += 2,
 
@@ -254,6 +262,7 @@ pub const Instruction = union(enum) {
 
     LoadMethod: []const u8,
     CallFunction: usize,
+    CallFunctionKW: usize,
     CallMethod: usize,
 
     BinaryOperation: BinaryOp,
