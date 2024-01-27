@@ -1,2 +1,3 @@
-a = None
-print(a)
+a = "a"
+b = bool(a)
+print(b)

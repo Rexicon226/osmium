@@ -33,7 +33,7 @@ strings: std.ArrayListUnmanaged(u8) = .{},
 // These won't ever actually be modified
 // this is some cursed code lmao
 pub const bool_true_ptr: *Key = @constCast(&Key{ .boolean = .True });
-pub const bool_false_ptr: *Key = @constCast(&Key{ .boolean = .True });
+pub const bool_false_ptr: *Key = @constCast(&Key{ .boolean = .False });
 pub const none_ptr: *Key = @constCast(&Key{ .none = {} });
 
 /// A index into the Pool map. Index 0 is none.
@@ -490,7 +490,7 @@ pub fn init(pool: *Pool, ally: Allocator) !void {
     }
 
     assert(pool.indexToKey(.bool_true).boolean == .True);
-    assert(pool.indexToKey(.bool_false).boolean == .True);
+    assert(pool.indexToKey(.bool_false).boolean == .False);
 
     assert(pool.items.len == static_keys.len + 1);
 }

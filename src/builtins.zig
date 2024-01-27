@@ -20,6 +20,7 @@ pub const func_proto = fn (*Vm, []Index) BuiltinError!void;
 pub const builtin_fns = &.{
     // // zig fmt: off
     .{ "abs", abs },
+    .{ "bool", boolBuiltin },
     .{ "print", print },
     // // zig fmt: on
 };
@@ -58,9 +59,11 @@ fn print(vm: *Vm, args: []Index) BuiltinError!void {
 
     const stdout = std.io.getStdOut().writer();
 
-    for (args) |arg_index| {
+    for (args, 0..) |arg_index, i| {
         const arg = vm.resolveArg(arg_index);
         printSafe(stdout, "{}", .{arg.fmt(vm.pool)});
+
+        if (i < args.len - 1) printSafe(stdout, " ", .{});
     }
 
     printSafe(stdout, "\n", .{});
@@ -73,4 +76,50 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
     writer.print(fmt, args) catch |err| {
         fatal("error: {s}", .{@errorName(err)});
     };
+}
+
+/// https://docs.python.org/3.10/library/stdtypes.html#truth
+fn boolBuiltin(vm: *Vm, args: []Index) BuiltinError!void {
+    const t = tracer.trace(@src(), "builtin-bool", .{});
+    defer t.end();
+
+    if (args.len > 1) fatal("abs() takes at most 1 arguments ({d} given)", .{args.len});
+
+    if (args.len == 0) {}
+
+    const arg_index = args[0];
+    const arg = vm.resolveArg(arg_index);
+
+    const value: bool = value: {
+        switch (arg.*) {
+            .none => break :value false,
+
+            .boolean => |boolean| {
+                if (boolean == .True) break :value true;
+                break :value false;
+            },
+
+            .int => |int| {
+                const value = int.value.to(i64) catch unreachable;
+
+                switch (value) {
+                    0 => break :value false,
+                    else => break :value true,
+                }
+            },
+
+            .string => |string| {
+                const length = string.length;
+                if (length == 0) break :value false;
+                break :value true;
+            },
+
+            else => fatal("bool() cannot take in type: {s}", .{@tagName(arg.*)}),
+        }
+    };
+
+    var val = try Value.Tag.create(.boolean, vm.allocator, .{ .boolean = value });
+    const index = try val.intern(vm);
+    try vm.stack.append(vm.allocator, index);
+    return;
 }
