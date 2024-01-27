@@ -358,7 +358,12 @@ fn execBinaryOperation(vm: *Vm, operation: Instruction.BinaryOp) !void {
     var result_big = try BigIntManaged.init(vm.allocator);
 
     switch (operation) {
-        .Add => try result_big.add(&rhs_int.value, &lhs_int.value),
+        .Add => try result_big.add(&lhs_int.value, &rhs_int.value),
+        .Subtract => try result_big.sub(&lhs_int.value, &rhs_int.value),
+        .Multiply => try result_big.mul(&lhs_int.value, &rhs_int.value),
+
+        // TODO: We actually want to create a float when we div
+        // need floats for that obviously!
         else => std.debug.panic("TODO: BinaryOperation {s}", .{@tagName(operation)}),
     }
 

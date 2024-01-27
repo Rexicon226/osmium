@@ -70,8 +70,10 @@ pub fn run_file(manager: *Manager, file_name: []const u8) !void {
 
     // This outputs to __pycache__/file_name.cpython-310.pyc
     const output_file_name: []const u8 = name: {
-        const trimmed_name: []const u8 = std.mem.trim(u8, file_name, ".py");
+        const trimmed_name: []const u8 = file_name[0 .. file_name.len - ".py".len];
         const output_file = std.fs.path.basename(trimmed_name);
+
+        log.debug("Trimmed: {s}", .{trimmed_name});
 
         const output_dir = std.fs.path.dirname(trimmed_name) orelse @panic("why in root");
 

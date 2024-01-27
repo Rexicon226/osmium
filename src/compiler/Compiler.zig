@@ -169,9 +169,11 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 cursor += 2;
             },
 
-            .BINARY_ADD => {
+            .BINARY_ADD, .BINARY_SUBTRACT, .BINARY_MULTIPLY => {
                 const binOp: Instruction.BinaryOp = switch (op) {
                     .BINARY_ADD => .Add,
+                    .BINARY_SUBTRACT => .Subtract,
+                    .BINARY_MULTIPLY => .Multiply,
                     else => unreachable,
                 };
 
