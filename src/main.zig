@@ -30,9 +30,11 @@ const ArgFlags = struct {
 };
 
 pub const std_options = struct {
-    pub const log_level: std.log.Level = switch (builtin.mode) {
-        .Debug => .debug,
-        else => .info,
+    pub const log_level: std.log.Level = switch (build_options.debug_log) {
+        .info => .info,
+        .warn => .warn,
+        .err => .err,
+        .debug => .debug,
     };
 };
 
@@ -76,10 +78,6 @@ pub fn main() !u8 {
             versionPrint();
             return 0;
         }
-
-        // if (isEqual(arg, "--debug")) {
-        //     options.debug_print = true;
-        // }
 
         // Check if a .py file.
         if (std.mem.endsWith(u8, arg, ".py")) {
@@ -127,7 +125,6 @@ fn usage() void {
         \\ Options:
         \\  --help, -h    Print this message
         \\  --version, -v Print the version
-        // \\  --debug       Enables the debug printing
     ;
 
     stdout.print(usage_string, .{}) catch |err| {

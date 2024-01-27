@@ -242,7 +242,6 @@ const TestManifest = struct {
                 fn parse(str: []const u8) anyerror!T {
                     if (std.mem.eql(u8, str, "true")) return true;
                     if (std.mem.eql(u8, str, "false")) return false;
-                    std.debug.print("{s}\n", .{str});
                     return error.InvalidBool;
                 }
             }.parse,
@@ -269,3 +268,22 @@ const TestManifest = struct {
         }
     }
 };
+
+pub fn getPyFilesInDir(dir_path: []const u8, ally: Allocator) ![]const []const u8 {
+    var files = std.ArrayList([]const u8).init(ally);
+    defer files.deinit();
+
+    var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
+    var it = dir.iterate();
+    while (try it.next()) |file| {
+        if (file.kind != .file) {
+            continue;
+        }
+        if (!std.mem.endsWith(u8, file.name, ".py")) {
+            continue;
+        }
+        try files.append(try ally.dupe(u8, file.name));
+    }
+
+    return try files.toOwnedSlice();
+}

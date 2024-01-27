@@ -82,8 +82,6 @@ pub fn run(vm: *Vm, alloc: Allocator, instructions: []Instruction) !void {
         );
         const func_index = try func_val.intern(vm);
 
-        std.debug.print("Index: {}\n", .{@intFromEnum(func_index)});
-
         // Add to the scope.
         try vm.scope.put(vm.allocator, name, func_index);
     }
@@ -247,9 +245,6 @@ fn execCallMethod(vm: *Vm, argc: usize) !void {
         vm,
         std.mem.concat(vm.allocator, Index, &.{ &.{self_index}, args }) catch @panic("OOM"),
     });
-
-    const self = vm.resolveArg(self_index);
-    std.debug.print("Self: {}\n", .{self.fmt(vm.pool)});
 }
 
 fn execPopTop(vm: *Vm) !void {

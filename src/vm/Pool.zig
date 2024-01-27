@@ -381,8 +381,6 @@ pub fn get(pool: *Pool, ally: Allocator, key: Key) Allocator.Error!Index {
             zig_func_key.* = .{ .zig_func = zig_func };
             try pool.decls.append(ally, zig_func_key);
 
-            std.debug.print("Len: {}\n", .{pool.items.len});
-
             pool.items.appendAssumeCapacity(.{
                 .tag = .zig_func,
                 .data = @intCast(index),
@@ -488,8 +486,7 @@ pub fn init(pool: *Pool, ally: Allocator) !void {
     try pool.items.append(ally, undefined);
 
     for (static_keys) |key| {
-        const index = pool.get(ally, key) catch unreachable;
-        std.debug.print("Index: {}\n", .{@intFromEnum(index)});
+        _ = pool.get(ally, key) catch unreachable;
     }
 
     assert(pool.indexToKey(.bool_true).boolean == .True);
