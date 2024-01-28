@@ -1,4 +1,3 @@
 def a():
-    print("worked")
-
+    b = 1
 a()
