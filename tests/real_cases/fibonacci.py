@@ -12,8 +12,3 @@ while count <= n:
     num2 = next_number
     next_number = num1 + num2
 print()
-
-# Note: There is a whitespace after "89"
-
-# run
-# output=1 2 3 5 8 13 21 34 55 89 

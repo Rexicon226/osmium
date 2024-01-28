@@ -1,2 +1,4 @@
-a = 1.0
-print(a)
+def a():
+    print("worked")
+
+a()
