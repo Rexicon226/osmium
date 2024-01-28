@@ -164,6 +164,10 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
                 try vm.stack.append(vm.allocator, @enumFromInt(3));
             }
         },
+
+        .CodeObject => |co| {
+            
+        },
     };
 }
 

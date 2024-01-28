@@ -25,7 +25,7 @@ pub fn init(allocator: std.mem.Allocator) Compiler {
     };
 }
 
-pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
+pub fn compile(compiler: *Compiler, co: *CodeObject) ![]Instruction {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
@@ -75,7 +75,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                             compiler.allocator,
                         );
                         for (tuple) |tup| {
-                            const constant = result2Const(tup, co);
+                            const constant = result2Const(tup);
                             try tuple_list.append(constant);
                         }
                         break :blk Instruction{
@@ -90,11 +90,31 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                     .Float => |float| Instruction{
                         .LoadConst = .{ .Float = float },
                     },
+                    .CodeObject => |codeobject| blk: {
+                        {
+                            // Compile the codeobject
+                            const co_instructions = try compiler.compile(codeobject);
+
+                            break :blk Instruction{ .LoadConst = .{ .CodeObject = co_instructions } };
+                        }
+                    },
                     else => |panic_op| std.debug.panic(
                         "cannot load inst {s}",
                         .{@tagName(panic_op)},
                     ),
                 };
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
+            .LOAD_GLOBAL => {
+                const index = bytes[cursor + 1];
+                const name = co.names[index];
+
+                // Just LoadConst the string. In theory it should be
+                // on the stack already.
+
+                const inst = Instruction{ .LoadConst = .{ .String = name.String } };
                 try instructions.append(inst);
                 cursor += 2;
             },
@@ -127,6 +147,13 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
                 // Number of arguments above this object on the stack.
                 const argc = bytes[cursor + 1];
                 const inst = Instruction{ .CallFunctionKW = argc };
+                try instructions.append(inst);
+                cursor += 2;
+            },
+
+            .MAKE_FUNCTION => {
+                const flags = bytes[cursor + 1];
+                const inst = Instruction{ .MakeFunction = flags };
                 try instructions.append(inst);
                 cursor += 2;
             },
@@ -220,7 +247,7 @@ pub fn compile(compiler: *Compiler, co: CodeObject) ![]Instruction {
     return inst_slice;
 }
 
-fn result2Const(result: Marshal.Result, co: CodeObject) Instruction.Constant {
+fn result2Const(result: Marshal.Result) Instruction.Constant {
     switch (result) {
         .Int => |int| return .{
             .Integer = int,
@@ -230,12 +257,6 @@ fn result2Const(result: Marshal.Result, co: CodeObject) Instruction.Constant {
         },
         .String => |string| return .{
             .String = string,
-        },
-        .Ref => |ref| {
-            // We could use Python's own interning system,
-            // but ours is more effienct and we will just resolve them here.
-            const item = co.flag_refs[ref.index] orelse @panic("no ref index in flag_ref");
-            return result2Const(item.content, co);
         },
         else => std.debug.panic(
             "cannot reify tuple that contains type: {s}",
@@ -269,6 +290,7 @@ pub const Instruction = union(enum) {
     CallFunction: usize,
     CallFunctionKW: usize,
     CallMethod: usize,
+    MakeFunction: u8,
 
     BinaryOperation: BinaryOp,
     UnaryOperation: UnaryOp,
@@ -287,6 +309,8 @@ pub const Instruction = union(enum) {
         Tuple: []const Constant,
         Boolean: bool,
         None: void,
+
+        CodeObject: []const Instruction,
     };
 
     pub const BinaryOp = enum {

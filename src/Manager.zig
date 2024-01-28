@@ -52,7 +52,6 @@ pub fn run_pyc(manager: *Manager, file_name: []const u8) !void {
     // const instructions = try compiler.compile(object);
 
     // var vm = try Vm.init();
-
     // try vm.run(manager.allocator, instructions);
 }
 
