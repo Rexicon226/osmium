@@ -39,7 +39,7 @@ co: *CodeObject,
 pub fn load(
     allocator: std.mem.Allocator,
     input_bytes: []const u8,
-) !CodeObject {
+) !*CodeObject {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
@@ -63,9 +63,11 @@ pub fn load(
 
     marshal.cursor += 16;
 
-    _ = marshal.read_object();
+    const co = marshal.read_object();
 
-    return marshal.co.*;
+    std.debug.print("Co: {}\n", .{co.fmt(co.CodeObject.*)});
+
+    return co.CodeObject;
 }
 
 fn read_object(marshal: *Marshal) Result {
@@ -131,7 +133,7 @@ fn read_object(marshal: *Marshal) Result {
 
         // This causes marshal to free some memory,
         // so we just return to prevent it from access flag_refs again.
-        .TYPE_CODE => return marshal.read_codeobject(),
+        .TYPE_CODE => result = marshal.read_codeobject(),
 
         .TYPE_TRUE => result = .{ .Bool = true },
         .TYPE_FALSE => result = .{ .Bool = false },
@@ -161,6 +163,8 @@ fn read_object(marshal: *Marshal) Result {
 }
 
 fn read_codeobject(marshal: *Marshal) Result {
+    // All of this compilcated stuff is to keep the reading in the right order.
+
     const structure = [_]struct { []const u8, *const fn (*Marshal) Result }{
         .{ "argcount", read_long },
         .{ "posonlyargcount", read_long },
@@ -181,6 +185,7 @@ fn read_codeobject(marshal: *Marshal) Result {
     };
 
     var dict = std.StringArrayHashMap(Result).init(marshal.allocator);
+    defer dict.deinit();
 
     for (structure) |struc| {
         const name, const method = struc;
@@ -194,19 +199,29 @@ fn read_codeobject(marshal: *Marshal) Result {
     );
     errdefer marshal.allocator.free(co);
 
+    // Here we just select the specific things we want.
+
     co.argcount = @intCast(dict.get("argcount").?.Int);
     co.name = dict.get("name").?.String;
-    co.filename = dict.get("filename").?.String;
+
+    const filename = dict.get("filename").?;
+
+    if (filename == .Ref) {
+        // Just resolve the ref
+        const name_flag_ref = marshal.flag_refs.items[filename.Ref.index].?;
+        const name_result = name_flag_ref.content;
+        const name = name_result.String;
+        co.filename = name;
+    } else {
+        co.filename = filename.String;
+    }
+
     co.consts = dict.get("consts").?.Tuple;
     co.stacksize = @intCast(dict.get("stacksize").?.Int);
     co.code = dict.get("code").?.String;
     co.names = dict.get("names").?.Tuple;
 
-    co.flag_refs = marshal.flag_refs.toOwnedSlice() catch @panic("OOM");
-
-    marshal.co = co;
-
-    return .{ .Dict = dict };
+    return .{ .CodeObject = co };
 }
 
 pub const Result = union(enum) {
@@ -222,6 +237,8 @@ pub const Result = union(enum) {
 
     // Internal
     Ref: Reference,
+
+    CodeObject: *CodeObject,
 
     pub fn format(
         _: Result,
@@ -264,6 +281,11 @@ pub const Result = union(enum) {
             .None => try writer.print("None", .{}),
             .String => |string| try writer.print("{s}", .{string}),
             .Bool => |boolean| try writer.print("{}", .{boolean}),
+
+            .CodeObject => |codeobject| {
+                try writer.print("{}", .{codeobject.consts[0].fmt(codeobject.*)});
+            },
+
             else => std.debug.panic(
                 "TODO: Result.format2 {s}",
                 .{@tagName(result)},
