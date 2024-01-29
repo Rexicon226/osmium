@@ -34,7 +34,6 @@ references: std.ArrayList(?Reference),
 cursor: u32,
 bytes: []const u8,
 allocator: std.mem.Allocator,
-co: *CodeObject,
 
 pub fn load(
     allocator: std.mem.Allocator,
@@ -64,9 +63,6 @@ pub fn load(
     marshal.cursor += 16;
 
     const co = marshal.read_object();
-
-    std.debug.print("Co: {}\n", .{co.fmt(co.CodeObject.*)});
-
     return co.CodeObject;
 }
 
@@ -123,17 +119,15 @@ fn read_object(marshal: *Marshal) Result {
                 @panic("failed to append to references");
             };
             marshal.flag_refs.items[index].?.usages += 1;
-            result = .{
-                .Ref = .{
-                    .byte = marshal.cursor,
-                    .index = index,
-                },
-            };
+            result = marshal.flag_refs.items[index].?.content;
         },
 
         // This causes marshal to free some memory,
         // so we just return to prevent it from access flag_refs again.
-        .TYPE_CODE => result = marshal.read_codeobject(),
+        .TYPE_CODE => {
+            std.debug.print("Here!\n", .{});
+            result = marshal.read_codeobject();
+        },
 
         .TYPE_TRUE => result = .{ .Bool = true },
         .TYPE_FALSE => result = .{ .Bool = false },
@@ -205,16 +199,7 @@ fn read_codeobject(marshal: *Marshal) Result {
     co.name = dict.get("name").?.String;
 
     const filename = dict.get("filename").?;
-
-    if (filename == .Ref) {
-        // Just resolve the ref
-        const name_flag_ref = marshal.flag_refs.items[filename.Ref.index].?;
-        const name_result = name_flag_ref.content;
-        const name = name_result.String;
-        co.filename = name;
-    } else {
-        co.filename = filename.String;
-    }
+    co.filename = filename.String;
 
     co.consts = dict.get("consts").?.Tuple;
     co.stacksize = @intCast(dict.get("stacksize").?.Int);
@@ -234,9 +219,6 @@ pub const Result = union(enum) {
     Tuple: []const Result,
     None: void,
     Bool: bool,
-
-    // Internal
-    Ref: Reference,
 
     CodeObject: *CodeObject,
 
@@ -272,19 +254,11 @@ pub const Result = union(enum) {
                 }
                 try writer.print(")", .{});
             },
-            .Ref => |ref| {
-                const flag_ref = co.flag_refs[ref.index] orelse unreachable;
-                try writer.print("{}", .{
-                    flag_ref.content.fmt(co),
-                });
-            },
             .None => try writer.print("None", .{}),
             .String => |string| try writer.print("{s}", .{string}),
             .Bool => |boolean| try writer.print("{}", .{boolean}),
 
-            .CodeObject => |codeobject| {
-                try writer.print("{}", .{codeobject.consts[0].fmt(codeobject.*)});
-            },
+            .CodeObject => try writer.print("CodeObject", .{}),
 
             else => std.debug.panic(
                 "TODO: Result.format2 {s}",
