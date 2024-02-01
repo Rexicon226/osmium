@@ -38,7 +38,7 @@ pub const none_ptr: *Key = @constCast(&Key{ .none = {} });
 
 /// A index into the Pool map. Index 0 is none.
 pub const Index = enum(u32) {
-    /// Not to be used for actual VM
+    /// Not to be used for actual VM. Use `none_type`.
     none = 0,
 
     none_type = 1,
@@ -154,7 +154,7 @@ pub const Key = union(enum) {
             try self_key.list.list.append(vm.allocator, args[1]);
 
             var return_val = Value.Tag.init(.none);
-            try vm.stack.append(vm.allocator, try return_val.intern(vm));
+            try vm.current_co.stack.append(vm.allocator, try return_val.intern(vm));
         }
     };
 

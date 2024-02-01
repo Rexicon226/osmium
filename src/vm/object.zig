@@ -81,7 +81,7 @@ pub const Value = struct {
             assert(@intFromEnum(t) < Tag.first_payload);
 
             // Only None has no payload for now, so just ip_index 1
-            return .{ .ip_index = @enumFromInt(1), .legacy = undefined };
+            return .{ .ip_index = Index.none_type, .legacy = undefined };
         }
     };
 
@@ -111,11 +111,11 @@ pub const Value = struct {
         // TODO: When looking up interned names, this will create duplcate entries to pool.strings.
         // we can probably do some sort of signature identify for the string, to see if it's already on it.
 
-        const start = vm.pool.strings.items.len;
+        const start = vm.current_co.pool.strings.items.len;
         const len = bytes.len;
 
         // Insert the bytes into the array.
-        try vm.pool.strings.appendSlice(vm.allocator, bytes);
+        try vm.current_co.pool.strings.appendSlice(vm.allocator, bytes);
 
         return Tag.create(.string, vm.allocator, .{ .string = .{
             .start = @intCast(start),
@@ -151,15 +151,15 @@ pub const Value = struct {
         switch (t) {
             .int => {
                 const pl = value.castTag(.int).?.data;
-                return vm.pool.get(vm.allocator, .{ .int = .{ .value = pl.int } });
+                return vm.current_co.pool.get(vm.allocator, .{ .int = .{ .value = pl.int } });
             },
             .float => {
                 const pl = value.castTag(.float).?.data;
-                return vm.pool.get(vm.allocator, .{ .float = .{ .value = pl.float } });
+                return vm.current_co.pool.get(vm.allocator, .{ .float = .{ .value = pl.float } });
             },
             .string => {
                 const pl = value.castTag(.string).?.data;
-                return vm.pool.get(vm.allocator, .{ .string = .{
+                return vm.current_co.pool.get(vm.allocator, .{ .string = .{
                     .start = pl.string.start,
                     .length = pl.string.length,
                 } });
@@ -167,29 +167,29 @@ pub const Value = struct {
 
             .tuple => {
                 const pl = value.castTag(.tuple).?.data;
-                return vm.pool.get(vm.allocator, .{ .tuple = .{ .value = pl } });
+                return vm.current_co.pool.get(vm.allocator, .{ .tuple = .{ .value = pl } });
             },
             .list => {
                 const pl = value.castTag(.list).?.data;
-                return vm.pool.get(vm.allocator, .{ .list = .{ .list = pl.list } });
+                return vm.current_co.pool.get(vm.allocator, .{ .list = .{ .list = pl.list } });
             },
 
             .zig_function => {
                 const pl = value.castTag(.zig_function).?.data;
-                return vm.pool.get(vm.allocator, .{ .zig_func = .{
+                return vm.current_co.pool.get(vm.allocator, .{ .zig_func = .{
                     .func_ptr = pl.func_ptr,
                 } });
             },
 
             // Can't intern none, it's an immediate value.
             // We reserve the pool index 1 for None.
-            .none => return @enumFromInt(1),
+            .none => return Index.none_type,
             .boolean => {
                 const pl = value.castTag(.boolean).?.data;
                 if (pl.boolean) {
-                    return @enumFromInt(2);
+                    return Index.bool_true;
                 } else {
-                    return @enumFromInt(3);
+                    return Index.bool_false;
                 }
             },
         }

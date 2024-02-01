@@ -4,6 +4,8 @@ const std = @import("std");
 const CodeObject = @import("CodeObject.zig");
 const tracer = @import("tracer");
 
+const Vm = @import("../vm/Vm.zig");
+
 const Marshal = @import("Marshal.zig");
 
 const OpCodes = @import("opcodes.zig");
@@ -25,7 +27,7 @@ pub fn init(allocator: std.mem.Allocator) Compiler {
     };
 }
 
-pub fn compile(compiler: *Compiler, co: *CodeObject) ![]Instruction {
+pub fn compile(compiler: *Compiler, co: *CodeObject) !*Vm.VmObject {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
@@ -92,10 +94,9 @@ pub fn compile(compiler: *Compiler, co: *CodeObject) ![]Instruction {
                     },
                     .CodeObject => |codeobject| blk: {
                         {
-                            // Compile the codeobject
-                            const co_instructions = try compiler.compile(codeobject);
+                            const compiled_co = try compiler.compile(codeobject);
 
-                            break :blk Instruction{ .LoadConst = .{ .CodeObject = co_instructions } };
+                            break :blk Instruction{ .LoadConst = .{ .CodeObject = compiled_co } };
                         }
                     },
                     else => |panic_op| std.debug.panic(
@@ -244,7 +245,9 @@ pub fn compile(compiler: *Compiler, co: *CodeObject) ![]Instruction {
         log.debug("Inst: {}", .{inst});
     }
 
-    return inst_slice;
+    const vm_co = Vm.VmObject.create(compiler.allocator, inst_slice);
+
+    return vm_co;
 }
 
 fn result2Const(result: Marshal.Result) Instruction.Constant {
@@ -310,7 +313,7 @@ pub const Instruction = union(enum) {
         Boolean: bool,
         None: void,
 
-        CodeObject: []const Instruction,
+        CodeObject: *Vm.VmObject,
     };
 
     pub const BinaryOp = enum {

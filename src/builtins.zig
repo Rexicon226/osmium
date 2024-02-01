@@ -53,7 +53,7 @@ fn abs(vm: *Vm, args: []Index, kw: ?KW_Type) BuiltinError!void {
         }
     };
 
-    try vm.stack.append(vm.allocator, index);
+    try vm.current_co.stack.append(vm.allocator, index);
 }
 
 fn print(vm: *Vm, args: []Index, maybe_kw: ?KW_Type) BuiltinError!void {
@@ -64,7 +64,7 @@ fn print(vm: *Vm, args: []Index, maybe_kw: ?KW_Type) BuiltinError!void {
 
     for (args, 0..) |arg_index, i| {
         const arg = vm.resolveArg(arg_index);
-        printSafe(stdout, "{}", .{arg.fmt(vm.pool)});
+        printSafe(stdout, "{}", .{arg.fmt(vm.current_co.pool)});
 
         if (i < args.len - 1) printSafe(stdout, " ", .{});
     }
@@ -77,7 +77,7 @@ fn print(vm: *Vm, args: []Index, maybe_kw: ?KW_Type) BuiltinError!void {
             if (maybe_print_override) |print_override| {
                 const val = vm.resolveArg(print_override);
                 if (val.* != .string) fatal("print(end=) must be a string type", .{});
-                break :end_print val.string.get(vm.pool);
+                break :end_print val.string.get(vm.current_co.pool);
             }
 
             break :end_print "\n";
@@ -89,7 +89,7 @@ fn print(vm: *Vm, args: []Index, maybe_kw: ?KW_Type) BuiltinError!void {
     printSafe(stdout, "{s}", .{end_print});
 
     var return_val = Value.Tag.init(.none);
-    try vm.stack.append(vm.allocator, try return_val.intern(vm));
+    try vm.current_co.stack.append(vm.allocator, try return_val.intern(vm));
 }
 
 fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
@@ -141,6 +141,6 @@ fn boolBuiltin(vm: *Vm, args: []Index, kw: ?KW_Type) BuiltinError!void {
 
     var val = try Value.Tag.create(.boolean, vm.allocator, .{ .boolean = value });
     const index = try val.intern(vm);
-    try vm.stack.append(vm.allocator, index);
+    try vm.current_co.stack.append(vm.allocator, index);
     return;
 }
