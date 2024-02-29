@@ -9,7 +9,7 @@ const Object = @import("vm/Object.zig");
 const Vm = @import("vm/Vm.zig");
 const fatal = @import("panic.zig").fatal;
 
-pub const KW_Type = std.StringArrayHashMap(Object);
+pub const KW_Type = std.StringHashMap(Object);
 
 pub const BuiltinError = error{OutOfMemory};
 

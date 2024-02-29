@@ -100,13 +100,21 @@ fn exec(vm: *Vm, i: Instruction) !void {
     switch (i) {
         .LoadConst => |constant| try vm.execLoadConst(constant),
         .LoadName => |name| try vm.execLoadName(name),
-        .StoreName => |name| try vm.execStoreName(name),
-        .ReturnValue => try vm.execReturnValue(),
-        .CallFunction => |argc| try vm.execCallFunction(argc),
-        .PopTop => try vm.execPopTop(),
         .BuildList => |argc| try vm.execBuildList(argc),
-        .BinaryOperation => |operation| try vm.execBinaryOperation(operation),
+
+        .StoreName => |name| try vm.execStoreName(name),
         .StoreSubScr => try vm.execStoreSubScr(),
+
+        .ReturnValue => try vm.execReturnValue(),
+
+        .PopTop => try vm.execPopTop(),
+        .PopJump => |s| try vm.execPopJump(s),
+
+        .BinaryOperation => |operation| try vm.execBinaryOperation(operation),
+        .CompareOperation => |operation| try vm.execCompareOperation(operation),
+
+        .CallFunction => |argc| try vm.execCallFunction(argc),
+        .CallFunctionKW => |argc| try vm.execCallFunctionKW(argc),
 
         else => std.debug.panic("TODO: exec{s}", .{@tagName(i)}),
     }
@@ -153,6 +161,30 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
     try @call(.auto, func_ptr.*, .{ vm, args, null });
 }
 
+fn execCallFunctionKW(vm: *Vm, argc: usize) !void {
+    const kw_tuple = vm.stack.pop();
+    const kw_tuple_slice = if (kw_tuple.tag == .tuple)
+        kw_tuple.get(.tuple).*
+    else
+        @panic("execCallFunctionKW tos tuple not tuple");
+    const tuple_len = kw_tuple_slice.len;
+
+    var kw_args = builtins.KW_Type.init(vm.allocator);
+    const kw_arg_objects = try vm.popNObjects(tuple_len);
+
+    for (kw_tuple_slice, kw_arg_objects) |name_object, val| {
+        const name = name_object.get(.string).string;
+        try kw_args.put(name, val);
+    }
+
+    const positional_args = try vm.popNObjects(argc - tuple_len);
+
+    const func = vm.stack.pop();
+    const func_ptr = func.get(.zig_function);
+
+    try @call(.auto, func_ptr.*, .{ vm, positional_args, kw_args });
+}
+
 fn execPopTop(vm: *Vm) !void {
     _ = vm.stack.pop();
 }
@@ -178,6 +210,33 @@ fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
     }
 
     const result_val = try Object.create(.int, vm.allocator, .{ .int = result });
+    try vm.stack.append(vm.allocator, result_val);
+}
+
+fn execCompareOperation(vm: *Vm, op: Instruction.CompareOp) !void {
+    const x = vm.stack.pop();
+    const y = vm.stack.pop();
+
+    assert(x.tag == .int);
+    assert(y.tag == .int);
+
+    const x_int = x.get(.int).int;
+    const y_int = y.get(.int).int;
+
+    const order = y_int.order(x_int);
+
+    const boolean = switch (op) {
+        // zig fmt: off
+        .Less         => (order == .lt),
+        .Greater      => (order == .gt),
+        .LessEqual    => (order == .eq or order == .lt),
+        .GreaterEqual => (order == .eq or order == .gt),
+        .Equal        => (order == .eq),
+        .NotEqual     => (order != .eq),
+        // zig fmt: on
+    };
+
+    const result_val = try Object.create(.boolean, vm.allocator, .{ .boolean = boolean });
     try vm.stack.append(vm.allocator, result_val);
 }
 
@@ -215,6 +274,19 @@ fn execStoreSubScr(vm: *Vm) !void {
         list_payload.items[@intCast(list_payload.items.len - @abs(index_int))] = value;
     } else {
         list_payload.items[@intCast(index_int)] = value;
+    }
+}
+
+fn execPopJump(vm: *Vm, case: anytype) !void {
+    const tos = vm.stack.pop();
+
+    const tos_bool = if (tos.tag == .boolean)
+        tos.get(.boolean).boolean
+    else
+        @panic("PopJump TOS not bool");
+
+    if (tos_bool == case.case) {
+        vm.program_counter = case.target;
     }
 }
 
