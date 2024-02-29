@@ -142,6 +142,19 @@ pub fn format(
 
             try writer.writeAll("]");
         },
+        .tuple => {
+            const tuple = object.get(.tuple).*;
+            const list_len = tuple.len;
+
+            try writer.writeAll("(");
+
+            for (tuple, 0..) |elem, i| {
+                try writer.print("{}", .{elem});
+                if (i < list_len - 1) try writer.writeAll(", ");
+            }
+
+            try writer.writeAll(")");
+        },
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
     }
 }

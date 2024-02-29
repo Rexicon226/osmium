@@ -100,18 +100,13 @@ fn exec(vm: *Vm, i: Instruction) !void {
     switch (i) {
         .LoadConst => |constant| try vm.execLoadConst(constant),
         .LoadName => |name| try vm.execLoadName(name),
-        // .LoadMethod => |name| try vm.execLoadMethod(name),
         .StoreName => |name| try vm.execStoreName(name),
         .ReturnValue => try vm.execReturnValue(),
         .CallFunction => |argc| try vm.execCallFunction(argc),
-        // .CallFunctionKW => |argc| try vm.exeCallFunctionKW(argc),
-        // .CallMethod => |argc| try vm.execCallMethod(argc),
         .PopTop => try vm.execPopTop(),
         .BuildList => |argc| try vm.execBuildList(argc),
-        // .CompareOperation => |compare| try vm.execCompareOperation(compare),
         .BinaryOperation => |operation| try vm.execBinaryOperation(operation),
-        // .PopJump => |case| try vm.execPopJump(case),
-        // .RotTwo => try vm.execRotTwo(),
+        .StoreSubScr => try vm.execStoreSubScr(),
 
         else => std.debug.panic("TODO: exec{s}", .{@tagName(i)}),
     }
@@ -119,26 +114,8 @@ fn exec(vm: *Vm, i: Instruction) !void {
 
 /// Stores an immediate Constant on the stack.
 fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
-    return switch (load_const) {
-        .Integer => |int| {
-            const big_int = try BigIntManaged.initSet(vm.allocator, int);
-            const val = try Object.create(.int, vm.allocator, .{ .int = big_int });
-            try vm.stack.append(vm.allocator, val);
-        },
-        .String => |string| {
-            const val = try Object.create(.string, vm.allocator, .{ .string = string });
-            try vm.stack.append(vm.allocator, val);
-        },
-        .Boolean => |boolean| {
-            const val = try Object.create(.boolean, vm.allocator, .{ .boolean = boolean });
-            try vm.stack.append(vm.allocator, val);
-        },
-        .None => {
-            const val = Object.init(.none);
-            try vm.stack.append(vm.allocator, val);
-        },
-        else => std.debug.panic("TODO: execLoadConst {s}", .{@tagName(load_const)}),
-    };
+    const val = try vm.loadConst(load_const);
+    try vm.stack.append(vm.allocator, val);
 }
 
 fn execLoadName(vm: *Vm, name: []const u8) !void {
@@ -204,6 +181,45 @@ fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
     try vm.stack.append(vm.allocator, result_val);
 }
 
+fn execStoreSubScr(vm: *Vm) !void {
+    const index = vm.stack.pop();
+    const list = vm.stack.pop();
+    const value = vm.stack.pop();
+
+    if (list.tag != .list) {
+        std.debug.panic(
+            "cannot perform index assignment on non-list, found '{s}'",
+            .{@tagName(list.tag)},
+        );
+    }
+
+    if (index.tag != .int) {
+        std.debug.panic(
+            "list assignment index is not an int, found '{s}'",
+            .{@tagName(index.tag)},
+        );
+    }
+
+    const list_payload = list.get(.list);
+    const index_int = try index.get(.int).int.to(i64);
+
+    if (list_payload.items.len < index_int) {
+        std.debug.panic(
+            "attempting to assign to an index out of bounds, len: {d}, index {d}",
+            .{ list_payload.items.len, index_int },
+        );
+    }
+
+    if (index_int < 0) {
+        // @abs because then it resolves the usize target type.
+        list_payload.items[@intCast(list_payload.items.len - @abs(index_int))] = value;
+    } else {
+        list_payload.items[@intCast(index_int)] = value;
+    }
+}
+
+// Helpers
+
 /// Pops `n` items off the stack in reverse order and returns them.
 fn popNObjects(vm: *Vm, n: usize) ![]Object {
     const objects = try vm.allocator.alloc(Object, n);
@@ -215,4 +231,28 @@ fn popNObjects(vm: *Vm, n: usize) ![]Object {
     }
 
     return objects;
+}
+
+fn loadConst(vm: *Vm, load_const: Instruction.Constant) !Object {
+    switch (load_const) {
+        .Integer => |int| {
+            const big_int = try BigIntManaged.initSet(vm.allocator, int);
+            return Object.create(.int, vm.allocator, .{ .int = big_int });
+        },
+        .String => |string| {
+            return Object.create(.string, vm.allocator, .{ .string = string });
+        },
+        .Boolean => |boolean| {
+            return Object.create(.boolean, vm.allocator, .{ .boolean = boolean });
+        },
+        .None => return Object.init(.none),
+        .Tuple => |tuple| {
+            var items = try vm.allocator.alloc(Object, tuple.len);
+            for (tuple, 0..) |elem, i| {
+                items[i] = try vm.loadConst(elem);
+            }
+            return Object.create(.tuple, vm.allocator, items);
+        },
+        else => std.debug.panic("TODO: loadConst {s}", .{@tagName(load_const)}),
+    }
 }
