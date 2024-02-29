@@ -105,6 +105,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .LOAD_CONST => try vm.execLoadConst(inst),
         .LOAD_NAME => try vm.execLoadName(inst),
         .LOAD_METHOD => try vm.execLoadMethod(inst),
+        .LOAD_GLOBAL => try vm.execLoadGlobal(inst),
         .BUILD_LIST => try vm.execBuildList(inst),
 
         .STORE_NAME => try vm.execStoreName(inst),
@@ -125,6 +126,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .CALL_FUNCTION => try vm.execCallFunction(inst),
         .CALL_FUNCTION_KW => try vm.execCallFunctionKW(inst),
         .CALL_METHOD => try vm.execCallMethod(inst),
+
+        .MAKE_FUNCTION => try vm.execMakeFunction(inst),
 
         else => std.debug.panic("TODO: {s}", .{@tagName(inst.op)}),
     }
@@ -158,6 +161,13 @@ fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
     try vm.stack.append(vm.allocator, tos);
 }
 
+fn execLoadGlobal(vm: *Vm, inst: Instruction) !void {
+    const name = vm.current_co.getName(inst.extra);
+    const val = vm.scope.get(name) orelse
+        std.debug.panic("couldn't find '{s}' on the global scope", .{name});
+    try vm.stack.append(vm.allocator, val);
+}
+
 fn execStoreName(vm: *Vm, inst: Instruction) !void {
     const name = vm.current_co.getName(inst.extra);
     const tos = vm.stack.pop();
@@ -183,10 +193,22 @@ fn execBuildList(vm: *Vm, inst: Instruction) !void {
 fn execCallFunction(vm: *Vm, inst: Instruction) !void {
     const args = try vm.popNObjects(inst.extra);
 
-    const func = vm.stack.pop();
-    const func_ptr = func.get(.zig_function);
+    const func_object = vm.stack.pop();
 
-    try @call(.auto, func_ptr.*, .{ vm, args, null });
+    if (func_object.tag == .zig_function) {
+        const func_ptr = func_object.get(.zig_function);
+
+        try @call(.auto, func_ptr.*, .{ vm, args, null });
+        return;
+    }
+
+    if (func_object.tag == .function) {
+        const func = func_object.get(.function);
+        try func.co.process(vm.allocator);
+
+        // TODO: questionable pass by value. doesn't work if it isn't, but it shouldn't be.
+        vm.current_co.* = func.co.*;
+    }
 }
 
 fn execCallFunctionKW(vm: *Vm, inst: Instruction) !void {
@@ -331,6 +353,28 @@ fn execPopJump(vm: *Vm, inst: Instruction, case: bool) !void {
     }
 }
 
+fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
+    if (inst.extra != 0x00) @panic("Don't support function flags yet");
+
+    const name_object = vm.stack.pop();
+    const co_object = vm.stack.pop();
+
+    // std.debug.print("Name Tag: {}\n", .{name_object.get(.int).int});
+
+    assert(name_object.tag == .string);
+    assert(co_object.tag == .codeobject);
+
+    const name = name_object.get(.string).string;
+    const co = co_object.get(.codeobject).co;
+
+    const function = try Object.create(.function, vm.allocator, .{
+        .name = name,
+        .co = co,
+    });
+
+    try vm.stack.append(vm.allocator, function);
+}
+
 // Helpers
 
 /// Pops `n` items off the stack in reverse order and returns them.
@@ -365,6 +409,9 @@ fn loadConst(vm: *Vm, inst: Marshal.Result) !Object {
                 items[i] = try vm.loadConst(elem);
             }
             return Object.create(.tuple, vm.allocator, items);
+        },
+        .CodeObject => |co| {
+            return Object.create(.codeobject, vm.allocator, .{ .co = co });
         },
         else => std.debug.panic("TODO: loadConst {s}", .{@tagName(inst)}),
     }

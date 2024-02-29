@@ -1,2 +1,4 @@
-a = 1
-print(a)
+def test():
+    print(1)
+
+test()
