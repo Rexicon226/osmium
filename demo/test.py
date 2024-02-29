@@ -1,7 +1,5 @@
-a = 10
-def b(x): 
-    # c = "test"
-    print(x)
+def a(x):
+    return x * 2
 
-
-b(a)
+b = a(10)
+print(b)

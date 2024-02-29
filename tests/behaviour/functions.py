@@ -9,3 +9,9 @@ def c():
 
 a()
 b()
+
+def d(x):
+    return x * 2
+
+e = d(10)
+print(e)
