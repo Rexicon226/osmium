@@ -25,11 +25,19 @@ allocator: Allocator,
 
 current_co: *CodeObject,
 
+/// When we enter into a deeper scope, we push the previous code object
+/// onto here. Then when we leave it, we restore this one.
+co_stack: std.ArrayListUnmanaged(CodeObject) = .{},
+
+/// When at `depth` 0, this is considered the global scope. loads will
+/// be targeted at the `global_scope`.
+depth: u32 = 0,
+
 /// VM State
 is_running: bool,
 
 stack: std.ArrayListUnmanaged(Object) = .{},
-scope: std.StringArrayHashMapUnmanaged(Object) = .{},
+scopes: std.ArrayListUnmanaged(std.StringHashMapUnmanaged(Object)) = .{},
 
 pub fn init() !Vm {
     const t = tracer.trace(@src(), "", .{});
@@ -39,8 +47,6 @@ pub fn init() !Vm {
         .allocator = undefined,
         .is_running = false,
         .current_co = undefined,
-        .stack = .{},
-        .scope = .{},
     };
 }
 
@@ -59,8 +65,16 @@ pub fn run(
     vm.allocator = allocator;
 
     // Setup
-    vm.scope = .{};
+    vm.scopes = .{};
     vm.stack = .{};
+    vm.co_stack = .{};
+
+    // The global scope
+    const global_scope: std.StringHashMapUnmanaged(Object) = .{};
+    try vm.scopes.append(vm.allocator, global_scope);
+
+    // The top level scope should be the global scope.
+    assert(vm.scopes.items.len == 1);
 
     // Generate instruction wrapper.
     try co.process(vm.allocator);
@@ -74,7 +88,7 @@ pub fn run(
             vm.allocator,
             fn_ptr,
         );
-        try vm.scope.put(vm.allocator, name, func_val);
+        try vm.scopes.items[0].put(vm.allocator, name, func_val);
     }
 
     vm.is_running = true;
@@ -82,13 +96,14 @@ pub fn run(
     while (vm.is_running) {
         const instruction = co.instructions[vm.current_co.index];
         log.debug(
-            "Executing Instruction: {} (stacksize={}, pc={}/{}, mem={s})",
+            "Executing Instruction: {} (stack_size={}, pc={}/{}, mem={s}, depth={})",
             .{
                 instruction.op,
                 vm.stack.items.len,
                 co.index,
                 co.instructions.len,
                 std.fmt.fmtIntSizeDec(arena.state.end_index),
+                vm.depth,
             },
         );
 
@@ -105,10 +120,14 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .LOAD_CONST => try vm.execLoadConst(inst),
         .LOAD_NAME => try vm.execLoadName(inst),
         .LOAD_METHOD => try vm.execLoadMethod(inst),
+        .LOAD_GLOBAL => try vm.execLoadGlobal(inst),
+        .LOAD_FAST => try vm.execLoadFast(inst),
+
         .BUILD_LIST => try vm.execBuildList(inst),
 
         .STORE_NAME => try vm.execStoreName(inst),
         .STORE_SUBSCR => try vm.execStoreSubScr(),
+        .STORE_FAST => try vm.execStoreFast(inst),
 
         .RETURN_VALUE => try vm.execReturnValue(),
 
@@ -126,6 +145,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .CALL_FUNCTION_KW => try vm.execCallFunctionKW(inst),
         .CALL_METHOD => try vm.execCallMethod(inst),
 
+        .MAKE_FUNCTION => try vm.execMakeFunction(inst),
+
         else => std.debug.panic("TODO: {s}", .{@tagName(inst.op)}),
     }
 }
@@ -133,14 +154,14 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 /// Stores an immediate Constant on the stack.
 fn execLoadConst(vm: *Vm, inst: Instruction) !void {
     const constant = vm.current_co.consts[inst.extra];
-    const val = try vm.loadConst(constant);
+    const val = try loadConst(vm.allocator, constant);
     try vm.stack.append(vm.allocator, val);
 }
 
 fn execLoadName(vm: *Vm, inst: Instruction) !void {
     const name = vm.current_co.getName(inst.extra);
-    const val = vm.scope.get(name) orelse
-        std.debug.panic("couldn't find '{s}' on the scope", .{name});
+    const val = vm.lookUpwards(name) orelse
+        std.debug.panic("couldn't find '{s}'", .{name});
     try vm.stack.append(vm.allocator, val);
 }
 
@@ -158,18 +179,37 @@ fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
     try vm.stack.append(vm.allocator, tos);
 }
 
+fn execLoadGlobal(vm: *Vm, inst: Instruction) !void {
+    const name = vm.current_co.getName(inst.extra);
+    const val = vm.scopes.items[0].get(name) orelse
+        std.debug.panic("couldn't find '{s}' on the global scope", .{name});
+    try vm.stack.append(vm.allocator, val);
+}
+
+fn execLoadFast(vm: *Vm, inst: Instruction) !void {
+    const var_num = inst.extra;
+    const obj = vm.current_co.varnames[var_num];
+    log.debug("LoadFast obj tag: {s}", .{@tagName(obj.tag)});
+    try vm.stack.append(vm.allocator, obj);
+}
+
 fn execStoreName(vm: *Vm, inst: Instruction) !void {
     const name = vm.current_co.getName(inst.extra);
     const tos = vm.stack.pop();
-
-    // TODO: don't want to clobber here, make it more controlled.
-    // i know i will forget why variables are being overwritten correctly.
-    try vm.scope.put(vm.allocator, name, tos);
+    try vm.scopes.items[vm.depth].put(vm.allocator, name, tos);
 }
 
 fn execReturnValue(vm: *Vm) !void {
-    // TODO: More logic here
-    vm.is_running = false;
+    if (vm.depth == 0) {
+        vm.is_running = false;
+        return;
+    }
+
+    // Only the return value should be left.
+    assert(vm.stack.items.len == 1);
+
+    vm.current_co.* = vm.co_stack.pop();
+    vm.depth -= 1;
 }
 
 fn execBuildList(vm: *Vm, inst: Instruction) !void {
@@ -183,10 +223,31 @@ fn execBuildList(vm: *Vm, inst: Instruction) !void {
 fn execCallFunction(vm: *Vm, inst: Instruction) !void {
     const args = try vm.popNObjects(inst.extra);
 
-    const func = vm.stack.pop();
-    const func_ptr = func.get(.zig_function);
+    const func_object = vm.stack.pop();
 
-    try @call(.auto, func_ptr.*, .{ vm, args, null });
+    if (func_object.tag == .zig_function) {
+        const func_ptr = func_object.get(.zig_function);
+
+        try @call(.auto, func_ptr.*, .{ vm, args, null });
+        return;
+    }
+
+    if (func_object.tag == .function) {
+        const func = func_object.get(.function);
+        try func.co.process(vm.allocator);
+
+        try vm.co_stack.append(vm.allocator, vm.current_co.*);
+
+        // TODO: questionable pass by value. doesn't work if it isn't, but it shouldn't be.
+        vm.current_co.* = func.co.*;
+
+        vm.depth += 1;
+
+        // Set the args.
+        for (args, 0..) |arg, i| {
+            vm.current_co.varnames[i] = arg;
+        }
+    }
 }
 
 fn execCallFunctionKW(vm: *Vm, inst: Instruction) !void {
@@ -318,6 +379,13 @@ fn execStoreSubScr(vm: *Vm) !void {
     }
 }
 
+fn execStoreFast(vm: *Vm, inst: Instruction) !void {
+    const var_num = inst.extra;
+    const tos = vm.stack.pop();
+
+    vm.current_co.varnames[var_num] = tos;
+}
+
 fn execPopJump(vm: *Vm, inst: Instruction, case: bool) !void {
     const tos = vm.stack.pop();
 
@@ -329,6 +397,26 @@ fn execPopJump(vm: *Vm, inst: Instruction, case: bool) !void {
     if (tos_bool == case) {
         vm.current_co.index = inst.extra;
     }
+}
+
+fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
+    if (inst.extra != 0x00) @panic("Don't support function flags yet");
+
+    const name_object = vm.stack.pop();
+    const co_object = vm.stack.pop();
+
+    assert(name_object.tag == .string);
+    assert(co_object.tag == .codeobject);
+
+    const name = name_object.get(.string).string;
+    const co = co_object.get(.codeobject).co;
+
+    const function = try Object.create(.function, vm.allocator, .{
+        .name = name,
+        .co = co,
+    });
+
+    try vm.stack.append(vm.allocator, function);
 }
 
 // Helpers
@@ -346,26 +434,65 @@ fn popNObjects(vm: *Vm, n: usize) ![]Object {
     return objects;
 }
 
-fn loadConst(vm: *Vm, inst: Marshal.Result) !Object {
+pub fn loadConst(allocator: Allocator, inst: Marshal.Result) !Object {
     switch (inst) {
         .Int => |int| {
-            const big_int = try BigIntManaged.initSet(vm.allocator, int);
-            return Object.create(.int, vm.allocator, .{ .int = big_int });
+            const big_int = try BigIntManaged.initSet(allocator, int);
+            return Object.create(.int, allocator, .{ .int = big_int });
         },
         .String => |string| {
-            return Object.create(.string, vm.allocator, .{ .string = string });
+            return Object.create(.string, allocator, .{ .string = string });
         },
         .Bool => |boolean| {
-            return Object.create(.boolean, vm.allocator, .{ .boolean = boolean });
+            return Object.create(.boolean, allocator, .{ .boolean = boolean });
         },
         .None => return Object.init(.none),
         .Tuple => |tuple| {
-            var items = try vm.allocator.alloc(Object, tuple.len);
+            var items = try allocator.alloc(Object, tuple.len);
             for (tuple, 0..) |elem, i| {
-                items[i] = try vm.loadConst(elem);
+                items[i] = try loadConst(allocator, elem);
             }
-            return Object.create(.tuple, vm.allocator, items);
+            return Object.create(.tuple, allocator, items);
+        },
+        .CodeObject => |co| {
+            return Object.create(.codeobject, allocator, .{ .co = co });
         },
         else => std.debug.panic("TODO: loadConst {s}", .{@tagName(inst)}),
     }
+}
+
+/// Looks upwards in the scopes from the current depth and tries to find name.
+///
+/// Looks at current scope -> global scope -> rest to up index 1, for what I think is the hottest paths.
+fn lookUpwards(vm: *Vm, name: []const u8) ?Object {
+    const scopes = vm.scopes.items;
+
+    log.debug("lookUpwards depth {}", .{vm.depth});
+
+    return obj: {
+        // Check the immediate scope.
+        if (scopes[vm.depth].get(name)) |val| {
+            break :obj val;
+        }
+
+        // If we didn't find it in the immediate scope, and there is only one scope
+        // means it doesn't exist.
+        if (scopes.len == 1) break :obj null;
+
+        // Now there are at least two scopes, so check the global scope
+        // as it's pretty likely they are accessing a global.
+        if (scopes[0].get(name)) |val| {
+            break :obj val;
+        }
+
+        // Now we just search upwards from vm.depth -> scopes[1] (as we already searched global)
+        for (1..vm.depth) |i| {
+            const index = vm.depth - i;
+            if (scopes[index].get(name)) |val| {
+                break :obj val;
+            }
+        }
+
+        break :obj null;
+    };
 }

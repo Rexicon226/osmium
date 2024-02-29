@@ -1,2 +1,7 @@
-a = 1
-print(a)
+a = 10
+def b(x): 
+    # c = "test"
+    print(x)
+
+
+b(a)

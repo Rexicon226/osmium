@@ -1,6 +1,7 @@
 const std = @import("std");
 const Vm = @import("Vm.zig");
 const builtins = @import("../builtins.zig");
+const Co = @import("../compiler/CodeObject.zig");
 
 const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
@@ -43,6 +44,9 @@ pub const Tag = enum(usize) {
     /// A builtin Zig defined function.
     zig_function,
 
+    codeobject,
+    function,
+
     pub fn PayloadType(comptime t: Tag) type {
         assert(@intFromEnum(t) >= Tag.first_payload);
 
@@ -57,6 +61,8 @@ pub const Tag = enum(usize) {
             .list => Payload.List,
 
             .zig_function => Payload.ZigFunc,
+            .codeobject => Payload.CodeObject,
+            .function => Payload.PythonFunction,
 
             .none => unreachable,
             else => @compileError("TODO: PayloadType " ++ @tagName(t)),
@@ -111,6 +117,8 @@ pub const Payload = union(enum) {
     zig_func: ZigFunc,
     tuple: Tuple,
     list: List,
+    codeobject: CodeObject,
+    function: PythonFunction,
 
     pub const Value = union(enum) {
         int: BigIntManaged,
@@ -119,7 +127,9 @@ pub const Payload = union(enum) {
     };
 
     pub const ZigFunc = *const builtins.func_proto;
+
     pub const Tuple = []const Object;
+
     pub const List = struct {
         list: std.ArrayListUnmanaged(Object),
 
@@ -139,6 +149,15 @@ pub const Payload = union(enum) {
             const return_val = Object.init(.none);
             try vm.stack.append(vm.allocator, return_val);
         }
+    };
+
+    pub const CodeObject = struct {
+        co: *Co,
+    };
+
+    pub const PythonFunction = struct {
+        name: []const u8,
+        co: *Co,
     };
 };
 
@@ -191,6 +210,7 @@ pub fn format(
 
             try writer.writeAll(")");
         },
+
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
     }
 }

@@ -3,6 +3,8 @@
 const std = @import("std");
 const ObjType = @import("objtype.zig").ObjType;
 const CodeObject = @import("CodeObject.zig");
+const Object = @import("../vm/Object.zig");
+const Vm = @import("../vm/Vm.zig");
 const tracer = @import("tracer");
 
 const Marshal = @This();
@@ -197,6 +199,13 @@ fn read_codeobject(marshal: *Marshal) Result {
 
     const filename = dict.get("filename").?;
     co.filename = filename.String;
+
+    const varname_tuple = dict.get("varnames").?.Tuple;
+    const varnames = marshal.allocator.alloc(Object, varname_tuple.len) catch @panic("OOM");
+    for (varname_tuple, 0..) |elem, i| {
+        varnames[i] = Vm.loadConst(marshal.allocator, elem) catch @panic("OOM");
+    }
+    co.varnames = varnames;
 
     co.consts = dict.get("consts").?.Tuple;
     co.stack_size = @intCast(dict.get("stacksize").?.Int);
