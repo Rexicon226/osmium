@@ -1,6 +1,5 @@
 const std = @import("std");
 const Vm = @import("Vm.zig");
-const Compiler = @import("../compiler/Compiler.zig");
 const builtins = @import("../builtins.zig");
 
 const BigIntConst = std.math.big.int.Const;

@@ -10,7 +10,8 @@ const BigIntManaged = std.math.big.int.Managed;
 
 const tracer = @import("tracer");
 const CodeObject = @import("../compiler/CodeObject.zig");
-const Instruction = @import("../compiler/Compiler.zig").Instruction;
+const Instruction = @import("../compiler/Instruction.zig");
+const Marshal = @import("../compiler/Marshal.zig");
 
 const Object = @import("Object.zig");
 const Vm = @This();
@@ -19,11 +20,10 @@ const builtins = @import("../builtins.zig");
 
 const log = std.log.scoped(.vm);
 
-/// A raw program counter for jumping around.
-program_counter: usize,
-
 /// The VM's arena. All allocations during runtime should be made using this.
 allocator: Allocator,
+
+current_co: *CodeObject,
 
 /// VM State
 is_running: bool,
@@ -37,8 +37,8 @@ pub fn init() !Vm {
 
     return .{
         .allocator = undefined,
-        .program_counter = 0,
         .is_running = false,
+        .current_co = undefined,
         .stack = .{},
         .scope = .{},
     };
@@ -48,7 +48,7 @@ pub fn init() !Vm {
 pub fn run(
     vm: *Vm,
     alloc: Allocator,
-    instructions: []Instruction,
+    co: *CodeObject,
 ) !void {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
@@ -61,6 +61,10 @@ pub fn run(
     // Setup
     vm.scope = .{};
     vm.stack = .{};
+
+    // Generate instruction wrapper.
+    try co.process(vm.allocator);
+    vm.current_co = co;
 
     // Add the builtin functions to the scope.
     inline for (builtins.builtin_fns) |builtin_fn| {
@@ -76,65 +80,73 @@ pub fn run(
     vm.is_running = true;
 
     while (vm.is_running) {
-        const instruction = instructions[vm.program_counter];
+        const instruction = co.instructions[vm.current_co.index];
         log.debug(
             "Executing Instruction: {} (stacksize={}, pc={}/{}, mem={s})",
             .{
-                instruction,
+                instruction.op,
                 vm.stack.items.len,
-                vm.program_counter,
-                instructions.len,
+                co.index,
+                co.instructions.len,
                 std.fmt.fmtIntSizeDec(arena.state.end_index),
             },
         );
 
-        vm.program_counter += 1;
+        vm.current_co.index += 1;
         try vm.exec(instruction);
     }
 }
 
-fn exec(vm: *Vm, i: Instruction) !void {
-    const t = tracer.trace(@src(), "{s}", .{@tagName(i)});
+fn exec(vm: *Vm, inst: Instruction) !void {
+    const t = tracer.trace(@src(), "{s}", .{@tagName(inst.op)});
     defer t.end();
 
-    switch (i) {
-        .LoadConst => |constant| try vm.execLoadConst(constant),
-        .LoadName => |name| try vm.execLoadName(name),
-        .LoadMethod => |name| try vm.execLoadMethod(name),
-        .BuildList => |argc| try vm.execBuildList(argc),
+    switch (inst.op) {
+        .LOAD_CONST => try vm.execLoadConst(inst),
+        .LOAD_NAME => try vm.execLoadName(inst),
+        .LOAD_METHOD => try vm.execLoadMethod(inst),
+        .BUILD_LIST => try vm.execBuildList(inst),
 
-        .StoreName => |name| try vm.execStoreName(name),
-        .StoreSubScr => try vm.execStoreSubScr(),
+        .STORE_NAME => try vm.execStoreName(inst),
+        .STORE_SUBSCR => try vm.execStoreSubScr(),
 
-        .ReturnValue => try vm.execReturnValue(),
+        .RETURN_VALUE => try vm.execReturnValue(),
 
-        .PopTop => try vm.execPopTop(),
-        .PopJump => |s| try vm.execPopJump(s),
+        .POP_TOP => try vm.execPopTop(),
+        .POP_JUMP_IF_TRUE => try vm.execPopJump(inst, true),
+        .POP_JUMP_IF_FALSE => try vm.execPopJump(inst, false),
 
-        .BinaryOperation => |operation| try vm.execBinaryOperation(operation),
-        .CompareOperation => |operation| try vm.execCompareOperation(operation),
+        .INPLACE_ADD, .BINARY_ADD => try vm.execBinaryOperation(.add),
+        .INPLACE_SUBTRACT, .BINARY_SUBTRACT => try vm.execBinaryOperation(.sub),
+        .INPLACE_MULTIPLY, .BINARY_MULTIPLY => try vm.execBinaryOperation(.mul),
 
-        .CallFunction => |argc| try vm.execCallFunction(argc),
-        .CallFunctionKW => |argc| try vm.execCallFunctionKW(argc),
-        .CallMethod => |argc| try vm.execCallMethod(argc),
+        .COMPARE_OP => try vm.execCompareOperation(inst),
 
-        else => std.debug.panic("TODO: exec{s}", .{@tagName(i)}),
+        .CALL_FUNCTION => try vm.execCallFunction(inst),
+        .CALL_FUNCTION_KW => try vm.execCallFunctionKW(inst),
+        .CALL_METHOD => try vm.execCallMethod(inst),
+
+        else => std.debug.panic("TODO: {s}", .{@tagName(inst.op)}),
     }
 }
 
 /// Stores an immediate Constant on the stack.
-fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
-    const val = try vm.loadConst(load_const);
+fn execLoadConst(vm: *Vm, inst: Instruction) !void {
+    const constant = vm.current_co.consts[inst.extra];
+    const val = try vm.loadConst(constant);
     try vm.stack.append(vm.allocator, val);
 }
 
-fn execLoadName(vm: *Vm, name: []const u8) !void {
+fn execLoadName(vm: *Vm, inst: Instruction) !void {
+    const name = vm.current_co.getName(inst.extra);
     const val = vm.scope.get(name) orelse
         std.debug.panic("couldn't find '{s}' on the scope", .{name});
     try vm.stack.append(vm.allocator, val);
 }
 
-fn execLoadMethod(vm: *Vm, name: []const u8) !void {
+fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
+    const name = vm.current_co.getName(inst.extra);
+
     const tos = vm.stack.pop();
 
     const func = try tos.getMemberFunction(name, vm) orelse std.debug.panic(
@@ -146,8 +158,10 @@ fn execLoadMethod(vm: *Vm, name: []const u8) !void {
     try vm.stack.append(vm.allocator, tos);
 }
 
-fn execStoreName(vm: *Vm, name: []const u8) !void {
+fn execStoreName(vm: *Vm, inst: Instruction) !void {
+    const name = vm.current_co.getName(inst.extra);
     const tos = vm.stack.pop();
+
     // TODO: don't want to clobber here, make it more controlled.
     // i know i will forget why variables are being overwritten correctly.
     try vm.scope.put(vm.allocator, name, tos);
@@ -158,16 +172,16 @@ fn execReturnValue(vm: *Vm) !void {
     vm.is_running = false;
 }
 
-fn execBuildList(vm: *Vm, count: u32) !void {
-    const objects = try vm.popNObjects(count);
+fn execBuildList(vm: *Vm, inst: Instruction) !void {
+    const objects = try vm.popNObjects(inst.extra);
     const list = std.ArrayListUnmanaged(Object).fromOwnedSlice(objects);
 
     const val = try Object.create(.list, vm.allocator, .{ .list = list });
     try vm.stack.append(vm.allocator, val);
 }
 
-fn execCallFunction(vm: *Vm, argc: usize) !void {
-    const args = try vm.popNObjects(argc);
+fn execCallFunction(vm: *Vm, inst: Instruction) !void {
+    const args = try vm.popNObjects(inst.extra);
 
     const func = vm.stack.pop();
     const func_ptr = func.get(.zig_function);
@@ -175,7 +189,7 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
     try @call(.auto, func_ptr.*, .{ vm, args, null });
 }
 
-fn execCallFunctionKW(vm: *Vm, argc: usize) !void {
+fn execCallFunctionKW(vm: *Vm, inst: Instruction) !void {
     const kw_tuple = vm.stack.pop();
     const kw_tuple_slice = if (kw_tuple.tag == .tuple)
         kw_tuple.get(.tuple).*
@@ -191,7 +205,7 @@ fn execCallFunctionKW(vm: *Vm, argc: usize) !void {
         try kw_args.put(name, val);
     }
 
-    const positional_args = try vm.popNObjects(argc - tuple_len);
+    const positional_args = try vm.popNObjects(inst.extra - tuple_len);
 
     const func = vm.stack.pop();
     const func_ptr = func.get(.zig_function);
@@ -199,8 +213,8 @@ fn execCallFunctionKW(vm: *Vm, argc: usize) !void {
     try @call(.auto, func_ptr.*, .{ vm, positional_args, kw_args });
 }
 
-fn execCallMethod(vm: *Vm, argc: usize) !void {
-    const args = try vm.popNObjects(argc);
+fn execCallMethod(vm: *Vm, inst: Instruction) !void {
+    const args = try vm.popNObjects(inst.extra);
 
     const self = vm.stack.pop();
     const func = vm.stack.pop();
@@ -228,18 +242,17 @@ fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
     var result = try BigIntManaged.init(vm.allocator);
 
     switch (op) {
-        .Add => try result.add(&x_int, &y_int),
-        .Subtract => try result.sub(&x_int, &y_int),
-        .Multiply => try result.mul(&x_int, &y_int),
-        // .Divide => try result.div(&rem, &x_int, &y_int),
-        else => std.debug.panic("TOOD: execBinaryOperation '{s}'", .{@tagName(op)}),
+        .add => try result.add(&x_int, &y_int),
+        .sub => try result.sub(&x_int, &y_int),
+        .mul => try result.mul(&x_int, &y_int),
+        // TODO: more
     }
 
     const result_val = try Object.create(.int, vm.allocator, .{ .int = result });
     try vm.stack.append(vm.allocator, result_val);
 }
 
-fn execCompareOperation(vm: *Vm, op: Instruction.CompareOp) !void {
+fn execCompareOperation(vm: *Vm, inst: Instruction) !void {
     const x = vm.stack.pop();
     const y = vm.stack.pop();
 
@@ -250,6 +263,8 @@ fn execCompareOperation(vm: *Vm, op: Instruction.CompareOp) !void {
     const y_int = y.get(.int).int;
 
     const order = y_int.order(x_int);
+
+    const op: Instruction.CompareOp = @enumFromInt(inst.extra);
 
     const boolean = switch (op) {
         // zig fmt: off
@@ -303,7 +318,7 @@ fn execStoreSubScr(vm: *Vm) !void {
     }
 }
 
-fn execPopJump(vm: *Vm, case: anytype) !void {
+fn execPopJump(vm: *Vm, inst: Instruction, case: bool) !void {
     const tos = vm.stack.pop();
 
     const tos_bool = if (tos.tag == .boolean)
@@ -311,8 +326,8 @@ fn execPopJump(vm: *Vm, case: anytype) !void {
     else
         @panic("PopJump TOS not bool");
 
-    if (tos_bool == case.case) {
-        vm.program_counter = case.target;
+    if (tos_bool == case) {
+        vm.current_co.index = inst.extra;
     }
 }
 
@@ -331,16 +346,16 @@ fn popNObjects(vm: *Vm, n: usize) ![]Object {
     return objects;
 }
 
-fn loadConst(vm: *Vm, load_const: Instruction.Constant) !Object {
-    switch (load_const) {
-        .Integer => |int| {
+fn loadConst(vm: *Vm, inst: Marshal.Result) !Object {
+    switch (inst) {
+        .Int => |int| {
             const big_int = try BigIntManaged.initSet(vm.allocator, int);
             return Object.create(.int, vm.allocator, .{ .int = big_int });
         },
         .String => |string| {
             return Object.create(.string, vm.allocator, .{ .string = string });
         },
-        .Boolean => |boolean| {
+        .Bool => |boolean| {
             return Object.create(.boolean, vm.allocator, .{ .boolean = boolean });
         },
         .None => return Object.init(.none),
@@ -351,6 +366,6 @@ fn loadConst(vm: *Vm, load_const: Instruction.Constant) !Object {
             }
             return Object.create(.tuple, vm.allocator, items);
         },
-        else => std.debug.panic("TODO: loadConst {s}", .{@tagName(load_const)}),
+        else => std.debug.panic("TODO: loadConst {s}", .{@tagName(inst)}),
     }
 }
