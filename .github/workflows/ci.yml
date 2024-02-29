@@ -16,6 +16,11 @@ jobs:
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.12.0-dev.3076+6e078883e
+      
+      - name: Setup Python3.10
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.10
           
       - name: Restore cache
         uses: actions/cache/restore@v3
