@@ -54,8 +54,8 @@ pub const Tag = enum(usize) {
             .boolean,
             => Payload.Value,
 
-            // .tuple => Payload.Tuple,
-            // .list => Payload.List,
+            .tuple => Payload.Tuple,
+            .list => Payload.List,
 
             .zig_function => Payload.ZigFunc,
 
@@ -92,6 +92,8 @@ pub fn get(object: *const Object, comptime t: Tag) *Data(t) {
 pub const Payload = union(enum) {
     value: Value,
     zig_func: ZigFunc,
+    tuple: Tuple,
+    list: List,
 
     pub const Value = union(enum) {
         int: BigIntManaged,
@@ -100,19 +102,8 @@ pub const Payload = union(enum) {
     };
 
     pub const ZigFunc = *const builtins.func_proto;
-
-    // pub const Tuple = struct {
-    //     base: Payload,
-    //     data: []const Pool.Index,
-    // };
-
-    // pub const List = struct {
-    //     base: Payload,
-    //     data: struct {
-    //         list: std.ArrayListUnmanaged(Index),
-    //     },
-    // };
-
+    pub const Tuple = []const Object;
+    pub const List = std.ArrayListUnmanaged(Object);
 };
 
 pub fn format(
@@ -137,6 +128,19 @@ pub fn format(
             const boolean = object.get(.boolean).boolean;
             const bool_string = if (boolean) "True" else "False";
             try writer.print("{s}", .{bool_string});
+        },
+        .list => {
+            const list = object.get(.list);
+            const list_len = list.items.len;
+
+            try writer.writeAll("[");
+
+            for (list.items, 0..) |elem, i| {
+                try writer.print("{}", .{elem});
+                if (i < list_len - 1) try writer.writeAll(", ");
+            }
+
+            try writer.writeAll("]");
         },
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
     }

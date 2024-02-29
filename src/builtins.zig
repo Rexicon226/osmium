@@ -18,40 +18,36 @@ pub const func_proto = fn (*Vm, []Object, kw: ?KW_Type) BuiltinError!void;
 /// https://docs.python.org/3.10/library/functions.html
 pub const builtin_fns = &.{
     // // zig fmt: off
-    // .{ "abs", abs },
+    .{ "abs", abs },
     .{ "bool", boolBuiltin },
     .{ "print", print },
     // // zig fmt: on
 };
 
-// fn abs(vm: *Vm, args: []Object, kw: ?KW_Type) BuiltinError!void {
-//     _ = kw;
-//     const t = tracer.trace(@src(), "builtin-abs", .{});
-//     defer t.end();
+fn abs(vm: *Vm, args: []Object, kw: ?KW_Type) BuiltinError!void {
+    if (null != kw) fatal("abs() has no kw args", .{});
 
-//     if (args.len != 1) fatal("abs() takes exactly one argument ({d} given)", .{args.len});
+    const t = tracer.trace(@src(), "builtin-abs", .{});
+    defer t.end();
 
-//     const arg_index = args[0];
-//     const arg = vm.resolveArg(arg_index);
+    if (args.len != 1) fatal("abs() takes exactly one argument ({d} given)", .{args.len});
 
-//     const index = value: {
-//         switch (arg.*) {
-//             .int => |int| {
-//                 var abs_int = int.value;
-//                 abs_int.abs();
+    const arg = args[0];
 
-//                 // Create a new Value from this abs
-//                 var abs_val = try Value.Tag.create(.int, vm.allocator, .{ .int = abs_int });
-//                 const abs_index = try abs_val.intern(vm);
+    const val = value: {
+        switch (arg.tag) {
+            .int => {
+                var int = arg.get(.int).int;
+                int.abs();
+                const abs_val = try Object.create(.int, vm.allocator, .{ .int = int });
+                break :value abs_val;
+            },
+            else => fatal("cannot abs() on type: {s}", .{@tagName(arg.tag)}),
+        }
+    };
 
-//                 break :value abs_index;
-//             },
-//             else => fatal("cannot abs() on type: {s}", .{@tagName(arg.*)}),
-//         }
-//     };
-
-//     try vm.current_co.stack.append(vm.allocator, index);
-// }
+    try vm.stack.append(vm.allocator, val);
+}
 
 fn print(vm: *Vm, args: []Object, maybe_kw: ?KW_Type) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-print", .{});
@@ -93,13 +89,13 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
 
 // /// https://docs.python.org/3.10/library/stdtypes.html#truth
 fn boolBuiltin(vm: *Vm, args: []Object, kw: ?KW_Type) BuiltinError!void {
-    _ = kw;
     const t = tracer.trace(@src(), "builtin-bool", .{});
     defer t.end();
 
-    if (args.len > 1) fatal("abs() takes at most 1 arguments ({d} given)", .{args.len});
+    if (null != kw) fatal("bool() has no kw args", .{});
 
-    if (args.len == 0) {}
+    if (args.len > 1) fatal("bool() takes at most 1 arguments ({d} given)", .{args.len});
+    if (args.len == 0) fatal("bool() takes 1 argument, 0 given", .{});
 
     const arg = args[0];
 

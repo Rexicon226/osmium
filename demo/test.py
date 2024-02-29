@@ -1,3 +1,2 @@
-a = "test"
-b = 1
-print(bool(a), b)
+a = [1, 2]
+print(a)

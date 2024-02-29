@@ -107,7 +107,7 @@ fn exec(vm: *Vm, i: Instruction) !void {
         // .CallFunctionKW => |argc| try vm.exeCallFunctionKW(argc),
         // .CallMethod => |argc| try vm.execCallMethod(argc),
         .PopTop => try vm.execPopTop(),
-        // .BuildList => |argc| try vm.execBuildList(argc),
+        .BuildList => |argc| try vm.execBuildList(argc),
         // .CompareOperation => |compare| try vm.execCompareOperation(compare),
         .BinaryOperation => |operation| try vm.execBinaryOperation(operation),
         // .PopJump => |case| try vm.execPopJump(case),
@@ -159,14 +159,16 @@ fn execReturnValue(vm: *Vm) !void {
     vm.is_running = false;
 }
 
-fn execCallFunction(vm: *Vm, argc: usize) !void {
-    var args = try vm.allocator.alloc(Object, argc);
+fn execBuildList(vm: *Vm, count: u32) !void {
+    const objects = try vm.popNObjects(count);
+    const list = std.ArrayListUnmanaged(Object).fromOwnedSlice(objects);
 
-    for (0..args.len) |i| {
-        const tos = vm.stack.pop();
-        const index = argc - i - 1;
-        args[index] = tos;
-    }
+    const val = try Object.create(.list, vm.allocator, list);
+    try vm.stack.append(vm.allocator, val);
+}
+
+fn execCallFunction(vm: *Vm, argc: usize) !void {
+    const args = try vm.popNObjects(argc);
 
     const func = vm.stack.pop();
     const func_ptr = func.get(.zig_function);
@@ -200,4 +202,17 @@ fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
 
     const result_val = try Object.create(.int, vm.allocator, .{ .int = result });
     try vm.stack.append(vm.allocator, result_val);
+}
+
+/// Pops `n` items off the stack in reverse order and returns them.
+fn popNObjects(vm: *Vm, n: usize) ![]Object {
+    const objects = try vm.allocator.alloc(Object, n);
+
+    for (0..n) |i| {
+        const tos = vm.stack.pop();
+        const index = n - i - 1;
+        objects[index] = tos;
+    }
+
+    return objects;
 }
