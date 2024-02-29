@@ -1,0 +1,37 @@
+on:
+  pull_request:
+  push:
+    branches:
+      - master 
+
+jobs:
+  deploy:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.12.0-dev.3008+b2374c4d7
+          
+      - name: Restore cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            ~/.cache/zig
+            zig-cache
+          key: osmium-${{hashFiles('build.zig.zon')}}          
+
+      - name: Run Tests
+        run: zig build test
+
+      - name: Save Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            ~/.cache/zig
+            zig-cache
+          key: osmium-${{hashFiles('build.zig.zon')}}         
