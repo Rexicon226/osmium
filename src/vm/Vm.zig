@@ -134,7 +134,8 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
 }
 
 fn execLoadName(vm: *Vm, name: []const u8) !void {
-    const val = try Object.create(.string, vm.allocator, .{ .string = name });
+    const val = vm.scope.get(name) orelse
+        std.debug.panic("couldn't find '{s}' on the scope", .{name});
     try vm.stack.append(vm.allocator, val);
 }
 
@@ -157,14 +158,7 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
         args[index] = tos;
     }
 
-    const func_object = vm.stack.pop();
-    const func_name = func_object.get(.string).string;
-    const func = vm.scope.get(func_name) orelse std.debug.panic(
-        "couldn't find '{s}' on the stack",
-        .{func_name},
-    );
-    assert(func.tag == .zig_function);
-
+    const func = vm.stack.pop();
     const func_ptr = func.get(.zig_function);
 
     try @call(.auto, func_ptr.*, .{ vm, args, null });

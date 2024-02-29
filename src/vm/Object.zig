@@ -86,7 +86,6 @@ pub fn init(comptime t: Tag) Object {
 pub fn get(object: *const Object, comptime t: Tag) *Data(t) {
     assert(@intFromEnum(t) >= Tag.first_payload);
     assert(object.tag == t);
-
     return @ptrCast(object.payload.?);
 }
 
@@ -128,6 +127,10 @@ pub fn format(
         .int => {
             const int = object.get(.int).int;
             try writer.print("{}", .{int});
+        },
+        .string => {
+            const string = object.get(.string).string;
+            try writer.print("{s}", .{string});
         },
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
     }
