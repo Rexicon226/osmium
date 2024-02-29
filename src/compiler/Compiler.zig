@@ -27,7 +27,7 @@ pub fn init(allocator: std.mem.Allocator) Compiler {
     };
 }
 
-pub fn compile(compiler: *Compiler, co: *CodeObject) !*Vm.VmObject {
+pub fn compile(compiler: *Compiler, co: *CodeObject) ![]Instruction {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
@@ -92,13 +92,7 @@ pub fn compile(compiler: *Compiler, co: *CodeObject) !*Vm.VmObject {
                     .Float => |float| Instruction{
                         .LoadConst = .{ .Float = float },
                     },
-                    .CodeObject => |codeobject| blk: {
-                        {
-                            const compiled_co = try compiler.compile(codeobject);
-
-                            break :blk Instruction{ .LoadConst = .{ .CodeObject = compiled_co } };
-                        }
-                    },
+                    .CodeObject => unreachable,
                     else => |panic_op| std.debug.panic(
                         "cannot load inst {s}",
                         .{@tagName(panic_op)},
@@ -245,9 +239,7 @@ pub fn compile(compiler: *Compiler, co: *CodeObject) !*Vm.VmObject {
         log.debug("Inst: {}", .{inst});
     }
 
-    const vm_co = Vm.VmObject.create(compiler.allocator, inst_slice);
-
-    return vm_co;
+    return inst_slice;
 }
 
 fn result2Const(result: Marshal.Result) Instruction.Constant {
@@ -312,8 +304,6 @@ pub const Instruction = union(enum) {
         Tuple: []const Constant,
         Boolean: bool,
         None: void,
-
-        CodeObject: *Vm.VmObject,
     };
 
     pub const BinaryOp = enum {

@@ -4,8 +4,8 @@
     .paths = .{""},
     .dependencies = .{
         .tracer = .{
-            .url = "https://github.com/Rexicon226/zig-tracer/archive/cfe8e56886301281293f330c3127956b4b8e3e75.tar.gz",
-            .hash = "1220799912e50ca892a63d8cf79b74728efba4e4f10177193dde9fa1ac3c134d2e6b",
+            .url = "https://github.com/Rexicon226/zig-tracer/archive/8c24ad8b1767c874c926417ddccc83981d66aedb.tar.gz",
+            .hash = "122012ae514d30f7304fd4e9668e6b8a20e0fa5db28c72b32b3f64e5945e5a1cd8a1",
         },
     },
 }

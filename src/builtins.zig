@@ -4,67 +4,63 @@
 const std = @import("std");
 const tracer = @import("tracer");
 
-const Pool = @import("vm/Pool.zig");
-const Index = Pool.Index;
-
-const Value = @import("vm/object.zig").Value;
+const Object = @import("vm/Object.zig");
 
 const Vm = @import("vm/Vm.zig");
 const fatal = @import("panic.zig").fatal;
 
-pub const KW_Type = std.StringArrayHashMap(Index);
+pub const KW_Type = std.StringArrayHashMap(Object);
 
 pub const BuiltinError = error{OutOfMemory};
 
-pub const func_proto = fn (*Vm, []Index, kw: ?KW_Type) BuiltinError!void;
+pub const func_proto = fn (*Vm, []Object, kw: ?KW_Type) BuiltinError!void;
 
 /// https://docs.python.org/3.10/library/functions.html
 pub const builtin_fns = &.{
     // // zig fmt: off
-    .{ "abs", abs },
-    .{ "bool", boolBuiltin },
+    // .{ "abs", abs },
+    // .{ "bool", boolBuiltin },
     .{ "print", print },
     // // zig fmt: on
 };
 
-fn abs(vm: *Vm, args: []Index, kw: ?KW_Type) BuiltinError!void {
-    _ = kw;
-    const t = tracer.trace(@src(), "builtin-abs", .{});
-    defer t.end();
+// fn abs(vm: *Vm, args: []Object, kw: ?KW_Type) BuiltinError!void {
+//     _ = kw;
+//     const t = tracer.trace(@src(), "builtin-abs", .{});
+//     defer t.end();
 
-    if (args.len != 1) fatal("abs() takes exactly one argument ({d} given)", .{args.len});
+//     if (args.len != 1) fatal("abs() takes exactly one argument ({d} given)", .{args.len});
 
-    const arg_index = args[0];
-    const arg = vm.resolveArg(arg_index);
+//     const arg_index = args[0];
+//     const arg = vm.resolveArg(arg_index);
 
-    const index = value: {
-        switch (arg.*) {
-            .int => |int| {
-                var abs_int = int.value;
-                abs_int.abs();
+//     const index = value: {
+//         switch (arg.*) {
+//             .int => |int| {
+//                 var abs_int = int.value;
+//                 abs_int.abs();
 
-                // Create a new Value from this abs
-                var abs_val = try Value.Tag.create(.int, vm.allocator, .{ .int = abs_int });
-                const abs_index = try abs_val.intern(vm);
+//                 // Create a new Value from this abs
+//                 var abs_val = try Value.Tag.create(.int, vm.allocator, .{ .int = abs_int });
+//                 const abs_index = try abs_val.intern(vm);
 
-                break :value abs_index;
-            },
-            else => fatal("cannot abs() on type: {s}", .{@tagName(arg.*)}),
-        }
-    };
+//                 break :value abs_index;
+//             },
+//             else => fatal("cannot abs() on type: {s}", .{@tagName(arg.*)}),
+//         }
+//     };
 
-    try vm.current_co.stack.append(vm.allocator, index);
-}
+//     try vm.current_co.stack.append(vm.allocator, index);
+// }
 
-fn print(vm: *Vm, args: []Index, maybe_kw: ?KW_Type) BuiltinError!void {
+fn print(vm: *Vm, args: []Object, maybe_kw: ?KW_Type) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-print", .{});
     defer t.end();
 
     const stdout = std.io.getStdOut().writer();
 
-    for (args, 0..) |arg_index, i| {
-        const arg = vm.resolveArg(arg_index);
-        printSafe(stdout, "{}", .{arg.fmt(vm.current_co.pool)});
+    for (args, 0..) |arg, i| {
+        printSafe(stdout, "{}", .{arg});
 
         if (i < args.len - 1) printSafe(stdout, " ", .{});
     }
@@ -75,21 +71,18 @@ fn print(vm: *Vm, args: []Index, maybe_kw: ?KW_Type) BuiltinError!void {
             const maybe_print_override = kw.get("end");
 
             if (maybe_print_override) |print_override| {
-                const val = vm.resolveArg(print_override);
-                if (val.* != .string) fatal("print(end=) must be a string type", .{});
-                break :end_print val.string.get(vm.current_co.pool);
+                if (print_override.tag != .string) fatal("print(end=) must be a string type", .{});
+                const payload = print_override.get(.string);
+                break :end_print payload.string;
             }
-
-            break :end_print "\n";
-        } else {
-            break :end_print "\n";
         }
+        break :end_print "\n";
     };
 
     printSafe(stdout, "{s}", .{end_print});
 
-    var return_val = Value.Tag.init(.none);
-    try vm.current_co.stack.append(vm.allocator, try return_val.intern(vm));
+    const return_val = Object.init(.none);
+    try vm.stack.append(vm.allocator, return_val);
 }
 
 fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
@@ -98,49 +91,49 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
     };
 }
 
-/// https://docs.python.org/3.10/library/stdtypes.html#truth
-fn boolBuiltin(vm: *Vm, args: []Index, kw: ?KW_Type) BuiltinError!void {
-    _ = kw;
-    const t = tracer.trace(@src(), "builtin-bool", .{});
-    defer t.end();
+// /// https://docs.python.org/3.10/library/stdtypes.html#truth
+// fn boolBuiltin(vm: *Vm, args: []Index, kw: ?KW_Type) BuiltinError!void {
+//     _ = kw;
+//     const t = tracer.trace(@src(), "builtin-bool", .{});
+//     defer t.end();
 
-    if (args.len > 1) fatal("abs() takes at most 1 arguments ({d} given)", .{args.len});
+//     if (args.len > 1) fatal("abs() takes at most 1 arguments ({d} given)", .{args.len});
 
-    if (args.len == 0) {}
+//     if (args.len == 0) {}
 
-    const arg_index = args[0];
-    const arg = vm.resolveArg(arg_index);
+//     const arg_index = args[0];
+//     const arg = vm.resolveArg(arg_index);
 
-    const value: bool = value: {
-        switch (arg.*) {
-            .none => break :value false,
+//     const value: bool = value: {
+//         switch (arg.*) {
+//             .none => break :value false,
 
-            .boolean => |boolean| {
-                if (boolean == .True) break :value true;
-                break :value false;
-            },
+//             .boolean => |boolean| {
+//                 if (boolean == .True) break :value true;
+//                 break :value false;
+//             },
 
-            .int => |int| {
-                const value = int.value.to(i64) catch unreachable;
+//             .int => |int| {
+//                 const value = int.value.to(i64) catch unreachable;
 
-                switch (value) {
-                    0 => break :value false,
-                    else => break :value true,
-                }
-            },
+//                 switch (value) {
+//                     0 => break :value false,
+//                     else => break :value true,
+//                 }
+//             },
 
-            .string => |string| {
-                const length = string.length;
-                if (length == 0) break :value false;
-                break :value true;
-            },
+//             .string => |string| {
+//                 const length = string.length;
+//                 if (length == 0) break :value false;
+//                 break :value true;
+//             },
 
-            else => fatal("bool() cannot take in type: {s}", .{@tagName(arg.*)}),
-        }
-    };
+//             else => fatal("bool() cannot take in type: {s}", .{@tagName(arg.*)}),
+//         }
+//     };
 
-    var val = try Value.Tag.create(.boolean, vm.allocator, .{ .boolean = value });
-    const index = try val.intern(vm);
-    try vm.current_co.stack.append(vm.allocator, index);
-    return;
-}
+//     var val = try Value.Tag.create(.boolean, vm.allocator, .{ .boolean = value });
+//     const index = try val.intern(vm);
+//     try vm.current_co.stack.append(vm.allocator, index);
+//     return;
+// }

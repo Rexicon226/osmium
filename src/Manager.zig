@@ -48,10 +48,10 @@ pub fn run_pyc(manager: *Manager, file_name: []const u8) !void {
 
     // Convert into the nice Instruction format
     var compiler = Compiler.init(manager.allocator);
-    const vm_object = try compiler.compile(object);
+    const instructions = try compiler.compile(object);
 
     var vm = try Vm.init();
-    try vm.run(manager.allocator, vm_object);
+    try vm.run(manager.allocator, instructions);
 }
 
 pub fn run_file(manager: *Manager, file_name: []const u8) !void {

@@ -29,13 +29,13 @@ const ArgFlags = struct {
     debug_print: bool = false,
 };
 
-pub const std_options = struct {
-    pub const log_level: std.log.Level = switch (build_options.debug_log) {
+pub const std_options: std.Options = .{
+    .log_level = switch (build_options.debug_log) {
         .info => .info,
         .warn => .warn,
         .err => .err,
         .debug => .debug,
-    };
+    },
 };
 
 pub fn main() !u8 {

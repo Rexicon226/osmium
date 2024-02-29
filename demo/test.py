@@ -1,3 +1,1 @@
-def a():
-    print("Hello")
-a()
+print(1)
