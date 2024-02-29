@@ -29,7 +29,8 @@ current_co: *CodeObject,
 is_running: bool,
 
 stack: std.ArrayListUnmanaged(Object) = .{},
-scope: std.StringArrayHashMapUnmanaged(Object) = .{},
+scope: std.StringHashMapUnmanaged(Object) = .{},
+global_scope: std.StringHashMapUnmanaged(Object) = .{},
 
 pub fn init() !Vm {
     const t = tracer.trace(@src(), "", .{});
@@ -41,6 +42,7 @@ pub fn init() !Vm {
         .current_co = undefined,
         .stack = .{},
         .scope = .{},
+        .global_scope = .{},
     };
 }
 
@@ -60,6 +62,7 @@ pub fn run(
 
     // Setup
     vm.scope = .{};
+    vm.global_scope = .{};
     vm.stack = .{};
 
     // Generate instruction wrapper.
@@ -74,7 +77,7 @@ pub fn run(
             vm.allocator,
             fn_ptr,
         );
-        try vm.scope.put(vm.allocator, name, func_val);
+        try vm.global_scope.put(vm.allocator, name, func_val);
     }
 
     vm.is_running = true;
@@ -143,7 +146,8 @@ fn execLoadConst(vm: *Vm, inst: Instruction) !void {
 fn execLoadName(vm: *Vm, inst: Instruction) !void {
     const name = vm.current_co.getName(inst.extra);
     const val = vm.scope.get(name) orelse
-        std.debug.panic("couldn't find '{s}' on the scope", .{name});
+        vm.global_scope.get(name) orelse
+        std.debug.panic("couldn't find '{s}' on the scope or global scope", .{name});
     try vm.stack.append(vm.allocator, val);
 }
 
@@ -163,7 +167,7 @@ fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
 
 fn execLoadGlobal(vm: *Vm, inst: Instruction) !void {
     const name = vm.current_co.getName(inst.extra);
-    const val = vm.scope.get(name) orelse
+    const val = vm.global_scope.get(name) orelse
         std.debug.panic("couldn't find '{s}' on the global scope", .{name});
     try vm.stack.append(vm.allocator, val);
 }
@@ -173,7 +177,6 @@ fn execStoreName(vm: *Vm, inst: Instruction) !void {
     const tos = vm.stack.pop();
 
     // TODO: don't want to clobber here, make it more controlled.
-    // i know i will forget why variables are being overwritten correctly.
     try vm.scope.put(vm.allocator, name, tos);
 }
 
