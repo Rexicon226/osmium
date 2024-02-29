@@ -7,5 +7,5 @@ def b():
 def c():
     print(2)
 
-# a()
+a()
 b()

@@ -25,6 +25,16 @@ allocator: Allocator,
 
 current_co: *CodeObject,
 
+/// When we enter into a deeper scope, we push the previous code object
+/// onto here. Then when we leave it, we restore this one.
+///
+/// TODO: Remove deeper scope variables
+co_stack: std.ArrayListUnmanaged(CodeObject),
+
+/// When at `depth` 0, this is considered the global scope. loads will
+/// be targeted at the `global_scope`.
+depth: u32 = 0,
+
 /// VM State
 is_running: bool,
 
@@ -42,6 +52,7 @@ pub fn init() !Vm {
         .current_co = undefined,
         .stack = .{},
         .scope = .{},
+        .co_stack = .{},
         .global_scope = .{},
     };
 }
@@ -64,6 +75,7 @@ pub fn run(
     vm.scope = .{};
     vm.global_scope = .{};
     vm.stack = .{};
+    vm.co_stack = .{};
 
     // Generate instruction wrapper.
     try co.process(vm.allocator);
@@ -85,13 +97,14 @@ pub fn run(
     while (vm.is_running) {
         const instruction = co.instructions[vm.current_co.index];
         log.debug(
-            "Executing Instruction: {} (stacksize={}, pc={}/{}, mem={s})",
+            "Executing Instruction: {} (stack_size={}, pc={}/{}, mem={s}, depth={})",
             .{
                 instruction.op,
                 vm.stack.items.len,
                 co.index,
                 co.instructions.len,
                 std.fmt.fmtIntSizeDec(arena.state.end_index),
+                vm.depth,
             },
         );
 
@@ -176,13 +189,21 @@ fn execStoreName(vm: *Vm, inst: Instruction) !void {
     const name = vm.current_co.getName(inst.extra);
     const tos = vm.stack.pop();
 
-    // TODO: don't want to clobber here, make it more controlled.
-    try vm.scope.put(vm.allocator, name, tos);
+    if (vm.depth == 0) {
+        try vm.global_scope.put(vm.allocator, name, tos);
+    } else {
+        try vm.scope.put(vm.allocator, name, tos);
+    }
 }
 
 fn execReturnValue(vm: *Vm) !void {
-    // TODO: More logic here
-    vm.is_running = false;
+    if (vm.depth == 0) {
+        vm.is_running = false;
+        return;
+    }
+
+    vm.current_co.* = vm.co_stack.pop();
+    vm.depth -= 1;
 }
 
 fn execBuildList(vm: *Vm, inst: Instruction) !void {
@@ -209,8 +230,12 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
         const func = func_object.get(.function);
         try func.co.process(vm.allocator);
 
+        try vm.co_stack.append(vm.allocator, vm.current_co.*);
+
         // TODO: questionable pass by value. doesn't work if it isn't, but it shouldn't be.
         vm.current_co.* = func.co.*;
+
+        vm.depth += 1;
     }
 }
 
