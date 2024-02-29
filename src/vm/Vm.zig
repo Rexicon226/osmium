@@ -190,8 +190,8 @@ fn execPopTop(vm: *Vm) !void {
 }
 
 fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
-    const x = vm.stack.pop();
     const y = vm.stack.pop();
+    const x = vm.stack.pop();
 
     assert(x.tag == .int);
     assert(y.tag == .int);
