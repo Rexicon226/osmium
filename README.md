@@ -13,7 +13,7 @@ I work on this in my limited free time, so nothing crazy.
 - [x]  Assignments
 - [x]  Math
 - [x]  User-defined function calling
-- [ ]  Builtin Functions 3/71
+- [ ]  Builtin Functions https://github.com/Rexicon226/osmium/issues/4
 - [ ]  User-defined function returns
       
 anything else hasn't been done yet.
