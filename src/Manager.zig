@@ -12,7 +12,6 @@ const tracer = @import("tracer");
 
 const Marshal = @import("compiler/Marshal.zig");
 const Vm = @import("vm/Vm.zig");
-const Compiler = @import("compiler/Compiler.zig");
 
 const log = std.log.scoped(.manager);
 
@@ -46,12 +45,8 @@ pub fn run_pyc(manager: *Manager, file_name: []const u8) !void {
     // Parse the code object
     const object = try Marshal.load(manager.allocator, source);
 
-    // Convert into the nice Instruction format
-    var compiler = Compiler.init(manager.allocator);
-    const instructions = try compiler.compile(object);
-
     var vm = try Vm.init();
-    try vm.run(manager.allocator, instructions);
+    try vm.run(manager.allocator, object);
 }
 
 pub fn run_file(manager: *Manager, file_name: []const u8) !void {

@@ -199,7 +199,7 @@ fn read_codeobject(marshal: *Marshal) Result {
     co.filename = filename.String;
 
     co.consts = dict.get("consts").?.Tuple;
-    co.stacksize = @intCast(dict.get("stacksize").?.Int);
+    co.stack_size = @intCast(dict.get("stacksize").?.Int);
     co.code = dict.get("code").?.String;
     co.names = dict.get("names").?.Tuple;
 
