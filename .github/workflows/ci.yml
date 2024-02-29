@@ -31,7 +31,7 @@ jobs:
           key: osmium-${{hashFiles('build.zig.zon')}}          
 
       - name: Run Tests
-        run: zig build test
+        run: zig build test --summary all
 
       - name: Save Cache
         uses: actions/cache/save@v3
