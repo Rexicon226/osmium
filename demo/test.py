@@ -1,11 +1,9 @@
-def a():
-    print(1)
-
+a = 1
 def b():
-    c()
+    c = 20
+    print(c)
 
-def c():
-    print(2)
 
-# a()
 b()
+print(c)
+    

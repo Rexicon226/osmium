@@ -4,6 +4,7 @@ const std = @import("std");
 const Marshal = @import("Marshal.zig");
 const Instruction = @import("Instruction.zig");
 const OpCode = @import("opcodes.zig").OpCode;
+const Object = @import("../vm/Object.zig");
 const Result = Marshal.Result;
 const Reference = Marshal.Reference;
 const FlagRef = Marshal.FlagRef;
@@ -30,6 +31,8 @@ stack_size: u32,
 
 /// ByteCode
 code: []const u8,
+
+varnames: []Object,
 
 // Interal reference table.
 flag_refs: []const ?FlagRef,
