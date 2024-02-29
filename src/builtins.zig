@@ -19,7 +19,7 @@ pub const func_proto = fn (*Vm, []Object, kw: ?KW_Type) BuiltinError!void;
 pub const builtin_fns = &.{
     // // zig fmt: off
     // .{ "abs", abs },
-    // .{ "bool", boolBuiltin },
+    .{ "bool", boolBuiltin },
     .{ "print", print },
     // // zig fmt: on
 };
@@ -92,48 +92,45 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
 }
 
 // /// https://docs.python.org/3.10/library/stdtypes.html#truth
-// fn boolBuiltin(vm: *Vm, args: []Index, kw: ?KW_Type) BuiltinError!void {
-//     _ = kw;
-//     const t = tracer.trace(@src(), "builtin-bool", .{});
-//     defer t.end();
+fn boolBuiltin(vm: *Vm, args: []Object, kw: ?KW_Type) BuiltinError!void {
+    _ = kw;
+    const t = tracer.trace(@src(), "builtin-bool", .{});
+    defer t.end();
 
-//     if (args.len > 1) fatal("abs() takes at most 1 arguments ({d} given)", .{args.len});
+    if (args.len > 1) fatal("abs() takes at most 1 arguments ({d} given)", .{args.len});
 
-//     if (args.len == 0) {}
+    if (args.len == 0) {}
 
-//     const arg_index = args[0];
-//     const arg = vm.resolveArg(arg_index);
+    const arg = args[0];
 
-//     const value: bool = value: {
-//         switch (arg.*) {
-//             .none => break :value false,
+    const value: bool = value: {
+        switch (arg.tag) {
+            .none => break :value false,
 
-//             .boolean => |boolean| {
-//                 if (boolean == .True) break :value true;
-//                 break :value false;
-//             },
+            .boolean => {
+                const boolean = arg.get(.boolean).boolean;
+                break :value boolean;
+            },
 
-//             .int => |int| {
-//                 const value = int.value.to(i64) catch unreachable;
+            .int => {
+                const int = arg.get(.int).int;
+                var zero = try std.math.big.int.Managed.initSet(vm.allocator, 0);
+                defer zero.deinit();
 
-//                 switch (value) {
-//                     0 => break :value false,
-//                     else => break :value true,
-//                 }
-//             },
+                if (int.eql(zero)) break :value false;
+                break :value true;
+            },
 
-//             .string => |string| {
-//                 const length = string.length;
-//                 if (length == 0) break :value false;
-//                 break :value true;
-//             },
+            .string => {
+                const string = arg.get(.string).string;
+                if (string.len == 0) break :value false;
+                break :value true;
+            },
 
-//             else => fatal("bool() cannot take in type: {s}", .{@tagName(arg.*)}),
-//         }
-//     };
+            else => fatal("bool() cannot take in type: {s}", .{@tagName(arg.tag)}),
+        }
+    };
 
-//     var val = try Value.Tag.create(.boolean, vm.allocator, .{ .boolean = value });
-//     const index = try val.intern(vm);
-//     try vm.current_co.stack.append(vm.allocator, index);
-//     return;
-// }
+    const val = try Object.create(.boolean, vm.allocator, .{ .boolean = value });
+    try vm.stack.append(vm.allocator, val);
+}

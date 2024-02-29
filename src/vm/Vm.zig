@@ -109,7 +109,7 @@ fn exec(vm: *Vm, i: Instruction) !void {
         .PopTop => try vm.execPopTop(),
         // .BuildList => |argc| try vm.execBuildList(argc),
         // .CompareOperation => |compare| try vm.execCompareOperation(compare),
-        // .BinaryOperation => |operation| try vm.execBinaryOperation(operation),
+        .BinaryOperation => |operation| try vm.execBinaryOperation(operation),
         // .PopJump => |case| try vm.execPopJump(case),
         // .RotTwo => try vm.execRotTwo(),
 
@@ -123,6 +123,14 @@ fn execLoadConst(vm: *Vm, load_const: Instruction.Constant) !void {
         .Integer => |int| {
             const big_int = try BigIntManaged.initSet(vm.allocator, int);
             const val = try Object.create(.int, vm.allocator, .{ .int = big_int });
+            try vm.stack.append(vm.allocator, val);
+        },
+        .String => |string| {
+            const val = try Object.create(.string, vm.allocator, .{ .string = string });
+            try vm.stack.append(vm.allocator, val);
+        },
+        .Boolean => |boolean| {
+            const val = try Object.create(.boolean, vm.allocator, .{ .boolean = boolean });
             try vm.stack.append(vm.allocator, val);
         },
         .None => {
@@ -141,6 +149,8 @@ fn execLoadName(vm: *Vm, name: []const u8) !void {
 
 fn execStoreName(vm: *Vm, name: []const u8) !void {
     const tos = vm.stack.pop();
+    // TODO: don't want to clobber here, make it more controlled.
+    // i know i will forget why variables are being overwritten correctly.
     try vm.scope.put(vm.allocator, name, tos);
 }
 
@@ -166,4 +176,28 @@ fn execCallFunction(vm: *Vm, argc: usize) !void {
 
 fn execPopTop(vm: *Vm) !void {
     _ = vm.stack.pop();
+}
+
+fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
+    const x = vm.stack.pop();
+    const y = vm.stack.pop();
+
+    assert(x.tag == .int);
+    assert(y.tag == .int);
+
+    const x_int = x.get(.int).int;
+    const y_int = y.get(.int).int;
+
+    var result = try BigIntManaged.init(vm.allocator);
+
+    switch (op) {
+        .Add => try result.add(&x_int, &y_int),
+        .Subtract => try result.sub(&x_int, &y_int),
+        .Multiply => try result.mul(&x_int, &y_int),
+        // .Divide => try result.div(&rem, &x_int, &y_int),
+        else => std.debug.panic("TOOD: execBinaryOperation '{s}'", .{@tagName(op)}),
+    }
+
+    const result_val = try Object.create(.int, vm.allocator, .{ .int = result });
+    try vm.stack.append(vm.allocator, result_val);
 }

@@ -51,7 +51,7 @@ pub const Tag = enum(usize) {
             .int,
             // .float,
             .string,
-            // .boolean,
+            .boolean,
             => Payload.Value,
 
             // .tuple => Payload.Tuple,
@@ -96,6 +96,7 @@ pub const Payload = union(enum) {
     pub const Value = union(enum) {
         int: BigIntManaged,
         string: []const u8,
+        boolean: bool,
     };
 
     pub const ZigFunc = *const builtins.func_proto;
@@ -131,6 +132,11 @@ pub fn format(
         .string => {
             const string = object.get(.string).string;
             try writer.print("{s}", .{string});
+        },
+        .boolean => {
+            const boolean = object.get(.boolean).boolean;
+            const bool_string = if (boolean) "True" else "False";
+            try writer.print("{s}", .{bool_string});
         },
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
     }

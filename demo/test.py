@@ -1,3 +1,3 @@
-a = 1
-b = 2
-print(a, b)
+a = "test"
+b = 1
+print(bool(a), b)
