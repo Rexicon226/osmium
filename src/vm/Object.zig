@@ -89,6 +89,24 @@ pub fn get(object: *const Object, comptime t: Tag) *Data(t) {
     return @ptrCast(object.payload.?);
 }
 
+pub fn getMemberFunction(object: *const Object, name: []const u8, vm: *Vm) error{OutOfMemory}!?Object {
+    const member_list =
+        switch (object.tag) {
+        .list => Payload.List.MemberFns,
+        else => std.debug.panic("{s} has no member functions", .{@tagName(object.tag)}),
+    };
+
+    inline for (member_list) |func| {
+        if (std.mem.eql(u8, func[0], name)) {
+            const func_ptr = func[1];
+
+            return try Object.create(.zig_function, vm.allocator, func_ptr);
+        }
+    }
+
+    return null;
+}
+
 pub const Payload = union(enum) {
     value: Value,
     zig_func: ZigFunc,
@@ -103,7 +121,26 @@ pub const Payload = union(enum) {
 
     pub const ZigFunc = *const builtins.func_proto;
     pub const Tuple = []const Object;
-    pub const List = std.ArrayListUnmanaged(Object);
+    pub const List = struct {
+        list: std.ArrayListUnmanaged(Object),
+
+        /// First arg is the List itself.
+        pub const MemberFns = &.{
+            .{ "append", append },
+        };
+
+        fn append(vm: *Vm, args: []Object, kw: ?builtins.KW_Type) !void {
+            if (null != kw) @panic("list.append() has no kw args");
+
+            if (args.len != 2) std.debug.panic("list.append() takes exactly 1 argument ({d} given)", .{args.len - 1});
+
+            const list = args[0].get(.list);
+            try list.list.append(vm.allocator, args[1]);
+
+            const return_val = Object.init(.none);
+            try vm.stack.append(vm.allocator, return_val);
+        }
+    };
 };
 
 pub fn format(
@@ -130,7 +167,7 @@ pub fn format(
             try writer.print("{s}", .{bool_string});
         },
         .list => {
-            const list = object.get(.list);
+            const list = object.get(.list).list;
             const list_len = list.items.len;
 
             try writer.writeAll("[");

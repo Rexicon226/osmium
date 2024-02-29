@@ -100,6 +100,7 @@ fn exec(vm: *Vm, i: Instruction) !void {
     switch (i) {
         .LoadConst => |constant| try vm.execLoadConst(constant),
         .LoadName => |name| try vm.execLoadName(name),
+        .LoadMethod => |name| try vm.execLoadMethod(name),
         .BuildList => |argc| try vm.execBuildList(argc),
 
         .StoreName => |name| try vm.execStoreName(name),
@@ -115,6 +116,7 @@ fn exec(vm: *Vm, i: Instruction) !void {
 
         .CallFunction => |argc| try vm.execCallFunction(argc),
         .CallFunctionKW => |argc| try vm.execCallFunctionKW(argc),
+        .CallMethod => |argc| try vm.execCallMethod(argc),
 
         else => std.debug.panic("TODO: exec{s}", .{@tagName(i)}),
     }
@@ -130,6 +132,18 @@ fn execLoadName(vm: *Vm, name: []const u8) !void {
     const val = vm.scope.get(name) orelse
         std.debug.panic("couldn't find '{s}' on the scope", .{name});
     try vm.stack.append(vm.allocator, val);
+}
+
+fn execLoadMethod(vm: *Vm, name: []const u8) !void {
+    const tos = vm.stack.pop();
+
+    const func = try tos.getMemberFunction(name, vm) orelse std.debug.panic(
+        "couldn't find '{s}.{s}'",
+        .{ @tagName(tos.tag), name },
+    );
+
+    try vm.stack.append(vm.allocator, func);
+    try vm.stack.append(vm.allocator, tos);
 }
 
 fn execStoreName(vm: *Vm, name: []const u8) !void {
@@ -148,7 +162,7 @@ fn execBuildList(vm: *Vm, count: u32) !void {
     const objects = try vm.popNObjects(count);
     const list = std.ArrayListUnmanaged(Object).fromOwnedSlice(objects);
 
-    const val = try Object.create(.list, vm.allocator, list);
+    const val = try Object.create(.list, vm.allocator, .{ .list = list });
     try vm.stack.append(vm.allocator, val);
 }
 
@@ -183,6 +197,18 @@ fn execCallFunctionKW(vm: *Vm, argc: usize) !void {
     const func_ptr = func.get(.zig_function);
 
     try @call(.auto, func_ptr.*, .{ vm, positional_args, kw_args });
+}
+
+fn execCallMethod(vm: *Vm, argc: usize) !void {
+    const args = try vm.popNObjects(argc);
+
+    const self = vm.stack.pop();
+    const func = vm.stack.pop();
+    const func_ptr = func.get(.zig_function);
+
+    const self_args = try std.mem.concat(vm.allocator, Object, &.{ &.{self}, args });
+
+    try @call(.auto, func_ptr.*, .{ vm, self_args, null });
 }
 
 fn execPopTop(vm: *Vm) !void {
@@ -259,7 +285,7 @@ fn execStoreSubScr(vm: *Vm) !void {
         );
     }
 
-    const list_payload = list.get(.list);
+    const list_payload = list.get(.list).list;
     const index_int = try index.get(.int).int.to(i64);
 
     if (list_payload.items.len < index_int) {
