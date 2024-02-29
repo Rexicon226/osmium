@@ -189,13 +189,13 @@ fn execLoadGlobal(vm: *Vm, inst: Instruction) !void {
 fn execLoadFast(vm: *Vm, inst: Instruction) !void {
     const var_num = inst.extra;
     const obj = vm.current_co.varnames[var_num];
+    log.debug("LoadFast obj tag: {s}", .{@tagName(obj.tag)});
     try vm.stack.append(vm.allocator, obj);
 }
 
 fn execStoreName(vm: *Vm, inst: Instruction) !void {
     const name = vm.current_co.getName(inst.extra);
     const tos = vm.stack.pop();
-
     try vm.scopes.items[vm.depth].put(vm.allocator, name, tos);
 }
 
@@ -242,6 +242,11 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
         vm.current_co.* = func.co.*;
 
         vm.depth += 1;
+
+        // Set the args.
+        for (args, 0..) |arg, i| {
+            vm.current_co.varnames[i] = arg;
+        }
     }
 }
 
@@ -461,6 +466,8 @@ pub fn loadConst(allocator: Allocator, inst: Marshal.Result) !Object {
 /// Looks at current scope -> global scope -> rest to up index 1, for what I think is the hottest paths.
 fn lookUpwards(vm: *Vm, name: []const u8) ?Object {
     const scopes = vm.scopes.items;
+
+    log.debug("lookUpwards depth {}", .{vm.depth});
 
     return obj: {
         // Check the immediate scope.

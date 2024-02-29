@@ -1,9 +1,7 @@
-a = 1
-def b():
-    c = 20
-    print(c)
+a = 10
+def b(x): 
+    # c = "test"
+    print(x)
 
 
-b()
-print(c)
-    
+b(a)

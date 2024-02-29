@@ -210,6 +210,7 @@ pub fn format(
 
             try writer.writeAll(")");
         },
+
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
     }
 }
