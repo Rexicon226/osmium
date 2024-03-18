@@ -17,13 +17,6 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    // Deps
-    const std_extras = b.addModule("std-extras", .{
-        .root_source_file = .{ .path = "src/std-extra/std.zig" },
-    });
-
-    exe.root_module.addImport("std-extras", std_extras);
-
     trace = b.option(bool, "trace",
         \\Enables tracing of the compiler using the default backend (spall)
     );
@@ -56,7 +49,6 @@ pub fn build(b: *std.Build) !void {
 
     const tracer_dep = b.dependency("tracer", .{});
     exe.root_module.addImport("tracer", tracer_dep.module("tracer"));
-    // exe.linkLibC(); // Needs libc.
 
     b.installArtifact(exe);
 
@@ -92,7 +84,7 @@ fn generateOpCode(
 ) void {
     const translator = b.addExecutable(.{
         .name = "opcode2zig",
-        .root_source_file = .{ .path = "./tools/opcode2zig.zig" },
+        .root_source_file = .{ .path = "tools/opcode2zig.zig" },
         .target = target,
         .optimize = .ReleaseFast,
     });
