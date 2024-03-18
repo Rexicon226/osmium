@@ -40,6 +40,7 @@ pub const Tag = enum(usize) {
     boolean,
     tuple,
     list,
+    set,
 
     /// A builtin Zig defined function.
     zig_function,
@@ -59,6 +60,8 @@ pub const Tag = enum(usize) {
 
             .tuple => Payload.Tuple,
             .list => Payload.List,
+
+            .set => Payload.Set,
 
             .zig_function => Payload.ZigFunc,
             .codeobject => Payload.CodeObject,
@@ -95,30 +98,46 @@ pub fn get(object: *const Object, comptime t: Tag) *Data(t) {
 }
 
 pub fn getMemberFunction(object: *const Object, name: []const u8, vm: *Vm) error{OutOfMemory}!?Object {
-    const member_list =
-        switch (object.tag) {
+    const member_list: Payload.MemberFuncTy = switch (object.tag) {
         .list => Payload.List.MemberFns,
+        .set => Payload.Set.MemberFns,
         else => std.debug.panic("{s} has no member functions", .{@tagName(object.tag)}),
     };
-
-    inline for (member_list) |func| {
-        if (std.mem.eql(u8, func[0], name)) {
-            const func_ptr = func[1];
-
+    for (member_list) |func| {
+        if (std.mem.eql(u8, func.name, name)) {
+            const func_ptr = func.func;
             return try Object.create(.zig_function, vm.allocator, func_ptr);
         }
     }
-
     return null;
+}
+
+pub fn callMemberFunction(
+    object: *const Object,
+    vm: *Vm,
+    name: []const u8,
+    args: []Object,
+    kw: ?builtins.KW_Type,
+) !void {
+    const func = try object.getMemberFunction(name, vm) orelse return error.NotAMemberFunction;
+    const func_ptr = func.get(.zig_function);
+    const self_args = try std.mem.concat(vm.allocator, Object, &.{ &.{object.*}, args });
+    try @call(.auto, func_ptr.*, .{ vm, self_args, kw });
 }
 
 pub const Payload = union(enum) {
     value: Value,
     zig_func: ZigFunc,
     tuple: Tuple,
+    set: Set,
     list: List,
     codeobject: CodeObject,
     function: PythonFunction,
+
+    pub const MemberFuncTy = []const struct {
+        name: []const u8,
+        func: *const builtins.func_proto,
+    };
 
     pub const Value = union(enum) {
         int: BigIntManaged,
@@ -133,9 +152,8 @@ pub const Payload = union(enum) {
     pub const List = struct {
         list: std.ArrayListUnmanaged(Object),
 
-        /// First arg is the List itself.
-        pub const MemberFns = &.{
-            .{ "append", append },
+        pub const MemberFns: MemberFuncTy = &.{
+            .{ .name = "append", .func = append },
         };
 
         fn append(vm: *Vm, args: []Object, kw: ?builtins.KW_Type) !void {
@@ -158,6 +176,47 @@ pub const Payload = union(enum) {
     pub const PythonFunction = struct {
         name: []const u8,
         co: *Co,
+    };
+
+    pub const Set = struct {
+        set: std.AutoHashMapUnmanaged(Object, void),
+        frozen: bool,
+
+        pub const MemberFns: MemberFuncTy = &.{
+            // zig fmt: off
+            .{ .name = "update", .func = update },
+            .{ .name = "add"   , .func = add    },
+            // zig fmt: on
+        };
+
+        /// Appends a set or iterable object.
+        fn update(vm: *Vm, args: []Object, kw: ?builtins.KW_Type) !void {
+            if (null != kw) @panic("set.update() has no kw args");
+
+            if (args.len != 2) std.debug.panic("set.update() takes exactly 1 argument ({d} given)", .{args.len - 1});
+
+            const self = args[0].get(.set);
+            const arg = args[0];
+
+            switch (arg.tag) {
+                .set => {
+                    const arg_set = args[1].get(.set).set;
+                    var obj_iter = arg_set.keyIterator();
+                    while (obj_iter.next()) |obj| {
+                        try self.set.put(vm.allocator, obj.*, {});
+                    }
+                },
+                else => std.debug.panic("can't append {s} to set", .{@tagName(arg.tag)}),
+            }
+        }
+
+        /// Appends an item.
+        fn add(vm: *Vm, args: []Object, kw: ?builtins.KW_Type) !void {
+            if (null != kw) @panic("set.add() has no kw args");
+
+            if (args.len != 2) std.debug.panic("set.add() takes exactly 1 argument ({d} given)", .{args.len - 1});
+            _ = vm;
+        }
     };
 };
 
@@ -209,6 +268,21 @@ pub fn format(
             }
 
             try writer.writeAll(")");
+        },
+        .set => {
+            const set = object.get(.set).set;
+            var iter = set.keyIterator();
+            const set_len = set.count();
+
+            try writer.writeAll("{");
+
+            var i: u32 = 0;
+            while (iter.next()) |obj| : (i += 1){
+                try writer.print("{}", .{obj});
+                if (i < set_len - 1) try writer.writeAll(", ");
+            }
+
+            try writer.writeAll("}");
         },
 
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),

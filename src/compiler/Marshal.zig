@@ -106,6 +106,22 @@ fn read_object(marshal: *Marshal) Result {
             };
         },
 
+        .TYPE_FROZENSET => {
+            const size = marshal.read_long();
+            var results = std.ArrayList(Result).init(marshal.allocator);
+            for (0..@intCast(size.Int)) |_| {
+                results.append(marshal.read_object()) catch {
+                    @panic("failed to append to frozenset");
+                };
+            }
+            result = .{
+                .Set = .{
+                    .set = results.toOwnedSlice() catch @panic("OOM"),
+                    .frozen = true,
+                },
+            };
+        },
+
         .TYPE_INT => result = marshal.read_long(),
         .TYPE_NONE => result = .{ .None = {} },
 
@@ -225,6 +241,12 @@ pub const Result = union(enum) {
     Tuple: []const Result,
     None: void,
     Bool: bool,
+
+    /// Both frozenset and set.
+    Set: struct {
+        set: []const Result,
+        frozen: bool,
+    },
 
     CodeObject: *CodeObject,
 

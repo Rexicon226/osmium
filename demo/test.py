@@ -1,5 +1,5 @@
-def a(x):
-    return x * 2
+# Set
+a = {1, 2, 3, 4, 5}
+# a.add(6)
 
-b = a(10)
-print(b)
+print(a)
