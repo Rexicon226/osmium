@@ -91,7 +91,7 @@ fn generateOpCode(
 
     const run_cmd = b.addRunArtifact(translator);
 
-    run_cmd.addArg("includes/opcode.h");
+    run_cmd.addArg("vendor/opcode.h");
     run_cmd.addArg("src/compiler/opcodes.zig");
 
     step.dependOn(&run_cmd.step);
