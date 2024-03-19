@@ -2,7 +2,7 @@ const std = @import("std");
 
 const cases = @import("tests/cases.zig");
 
-var trace: ?bool = false;
+var trace: bool = false;
 var @"enable-bench": ?bool = false;
 var backend: TraceBackend = .None;
 
@@ -19,9 +19,9 @@ pub fn build(b: *std.Build) !void {
 
     trace = b.option(bool, "trace",
         \\Enables tracing of the compiler using the default backend (spall)
-    );
+    ) orelse false;
 
-    if (trace) |_| {
+    if (trace) {
         backend = b.option(TraceBackend, "trace-backend",
             \\Switch between what backend to use. None is default.
         ) orelse backend;
@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) !void {
 
     const exe_options = b.addOptions();
 
-    exe_options.addOption(bool, "trace", trace orelse false);
+    exe_options.addOption(bool, "trace", trace);
     exe_options.addOption(TraceBackend, "backend", backend);
     exe_options.addOption(std.log.Level, "debug_log", debug_log);
     exe_options.addOption(usize, "src_file_trimlen", std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?.len);

@@ -28,7 +28,7 @@ payload: ?(*align(blk: {
 }) anyopaque),
 
 pub const Tag = enum(usize) {
-    const first_payload = @intFromEnum(Tag.none) + 1;
+    const first_payload = @intFromEnum(Tag.int);
 
     // Note: this is the literal None type.
     none,
