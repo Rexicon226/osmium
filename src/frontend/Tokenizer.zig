@@ -25,7 +25,7 @@ pub fn next(t: *Tokenizer) Token {
 
     while (true) : (t.index += 1) {
         const c = t.buffer[t.index];
-        log.debug("State: {}", .{state});
+        // log.debug("State: {}", .{state});
         switch (state) {
             .start => switch (c) {
                 0 => {
@@ -36,8 +36,17 @@ pub fn next(t: *Tokenizer) Token {
                     state = .identifier;
                     result.tag = .identifier;
                 },
-                ' ', '\n', '\r' => {
+                ' ' => { // TODO: spaces shouldn't be advanced but instead counted towards indents.
                     result.loc.start = t.index + 1;
+                },
+                '\n' => {
+                    result.tag = .newline;
+                    t.index += 1;
+                    return result;
+                },
+                ';' => {
+                    result.tag = .semicolon;
+                    break;
                 },
                 '=' => {
                     state = .equal_start;
@@ -104,6 +113,8 @@ pub const Token = struct {
         eof,
         identifier,
         number_literal,
+        newline,
+        semicolon,
 
         // keywords
         keyword_false,

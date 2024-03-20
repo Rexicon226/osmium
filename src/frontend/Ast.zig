@@ -30,9 +30,10 @@ pub fn parse(source: [:0]const u8, allocator: Allocator) !Ast {
         .allocator = allocator,
         .nodes = .{},
         .source = source,
+        .extra_data = .{},
+        .scratch = .{},
     };
-    defer parser.tokens.deinit(allocator);
-    defer parser.nodes.deinit(allocator);
+    defer parser.deinit();
 
     try parser.parseFile();
 
