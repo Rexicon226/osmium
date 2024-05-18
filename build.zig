@@ -39,7 +39,6 @@ pub fn build(b: *std.Build) !void {
     exe.use_lld = use_llvm;
 
     const exe_options = b.addOptions();
-
     exe_options.addOption(bool, "trace", trace);
     exe_options.addOption(TraceBackend, "backend", backend);
     exe_options.addOption(std.log.Level, "debug_log", debug_log);
@@ -49,6 +48,11 @@ pub fn build(b: *std.Build) !void {
 
     const tracer_dep = b.dependency("tracer", .{});
     exe.root_module.addImport("tracer", tracer_dep.module("tracer"));
+
+    exe.linkLibC();
+
+    exe.linkSystemLibrary("python");
+    exe.addLibraryPath(b.path("vendor/"));
 
     b.installArtifact(exe);
 

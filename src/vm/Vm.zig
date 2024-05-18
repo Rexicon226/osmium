@@ -16,7 +16,7 @@ const Marshal = @import("../compiler/Marshal.zig");
 const Object = @import("Object.zig");
 const Vm = @This();
 
-const builtins = @import("../builtins.zig");
+const builtins = @import("builtins.zig");
 
 const log = std.log.scoped(.vm);
 

@@ -377,11 +377,11 @@ fn set_version(marshal: *Marshal, magic_bytes: [4]u8) void {
 }
 
 ///  Set's a bit at `offset` in `int`
-fn testBit(int: anytype, comptime offset: u8) bool {
+fn testBit(int: anytype, comptime offset: u3) bool {
     const mask = @as(u8, 1) << offset;
     return (int & mask) != 0;
 }
 
-fn clearBit(int: anytype, comptime offset: u8) @TypeOf(int) {
+fn clearBit(int: anytype, comptime offset: u3) @TypeOf(int) {
     return int & ~(@as(u8, 1) << offset);
 }

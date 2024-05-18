@@ -7,7 +7,7 @@ const Manager = @This();
 
 const tracer = @import("tracer");
 
-const Ast = @import("frontend/Ast.zig");
+const Python = @import("frontend/Python.zig");
 
 const Marshal = @import("compiler/Marshal.zig");
 const Vm = @import("vm/Vm.zig");
@@ -31,14 +31,7 @@ pub fn run_pyc(manager: *Manager, file_name: []const u8) !void {
     // Open source file.
     const source_file = try std.fs.cwd().openFile(file_name, .{});
     const source_file_size = (try source_file.stat()).size;
-
-    const source = try source_file.readToEndAllocOptions(
-        manager.allocator,
-        source_file_size,
-        source_file_size,
-        @alignOf(u8),
-        0,
-    );
+    const source = try source_file.readToEndAlloc(manager.allocator, source_file_size);
 
     // Parse the code object
     const object = try Marshal.load(manager.allocator, source);
@@ -61,6 +54,9 @@ pub fn run_file(manager: *Manager, file_name: []const u8) !void {
         0,
     );
 
-    const ast = try Ast.parse(source, manager.allocator);
-    _ = ast;
+    const pyc = try Python.parse(source, manager.allocator);
+    const object = try Marshal.load(manager.allocator, pyc);
+
+    var vm = try Vm.init();
+    try vm.run(manager.allocator, object);
 }
