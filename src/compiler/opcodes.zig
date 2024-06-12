@@ -130,5 +130,5 @@ pub const OpCode = enum(u8) {
     SET_UPDATE = 163,
     DICT_MERGE = 164,
     DICT_UPDATE = 165,
-    // EXCEPT_HANDLER = 257,
+    // EXCEPT_HANDLER = 257, TODO: why is there 257 in a u8 enum?
 };

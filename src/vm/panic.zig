@@ -15,5 +15,5 @@ pub fn fatal(comptime format: []const u8, args: anytype) noreturn {
 
     stderr.writeAll(msg) catch |err| @panic(@errorName(err));
 
-    std.os.exit(1);
+    std.posix.exit(1);
 }

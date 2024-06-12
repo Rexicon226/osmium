@@ -4,8 +4,12 @@
     .paths = .{""},
     .dependencies = .{
         .tracer = .{
-            .url = "https://github.com/Rexicon226/zig-tracer/archive/8c24ad8b1767c874c926417ddccc83981d66aedb.tar.gz",
-            .hash = "122012ae514d30f7304fd4e9668e6b8a20e0fa5db28c72b32b3f64e5945e5a1cd8a1",
+            .url = "https://github.com/Rexicon226/zig-tracer/archive/f0c24a3e0ecf232493ab2fadc65f06e48956ccba.tar.gz",
+            .hash = "1220857ddca6c829d4b68f35e929b32e4eee13c265bc096c634ae8b3d6da7daf34df",
+        },
+        .python = .{
+            .url = "https://github.com/python/cpython/archive/333c7dccd87c637d0b15cf81f9bbec28e39664fd.tar.gz",
+            .hash = "1220c520b358bd5e0bbcfae04b2e9e963ad3c3d7cc3b5ba24a0721e60a0123bfb1ea",
         },
     },
 }
