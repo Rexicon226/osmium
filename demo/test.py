@@ -1,11 +1,3 @@
-a = 1
-b = 2
-c = a + b
+from dep import a
 
-print(c)
-
-a = 1
-b = a + 2
-a += 1
-
-print(a, b)
+a()

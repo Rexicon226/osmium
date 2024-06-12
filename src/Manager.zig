@@ -41,11 +41,14 @@ pub fn run_pyc(manager: *Manager, file_name: []const u8) !void {
     // Parse the code object
     const object = try Marshal.load(manager.allocator, source);
 
-    var vm = try Vm.init();
-    try vm.run(manager.allocator, object);
+    var vm = try Vm.init(manager.allocator, object);
+    try vm.run();
 }
 
 pub fn run_file(manager: *Manager, file_name: []const u8) !void {
+    const t = tracer.trace(@src(), "", .{});
+    defer t.end();
+
     const source_file = std.fs.cwd().openFile(file_name, .{ .lock = .exclusive }) catch |err| {
         switch (err) {
             error.FileNotFound => @panic("invalid file provided"),
@@ -67,6 +70,6 @@ pub fn run_file(manager: *Manager, file_name: []const u8) !void {
     const pyc = try Python.parse(source, manager.allocator);
     const object = try Marshal.load(manager.allocator, pyc);
 
-    var vm = try Vm.init();
-    try vm.run(manager.allocator, object);
+    var vm = try Vm.init(manager.allocator, object);
+    try vm.run();
 }
