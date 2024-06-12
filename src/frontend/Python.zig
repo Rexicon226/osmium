@@ -23,9 +23,6 @@ pub fn parse(source: [:0]const u8, allocator: std.mem.Allocator) ![]const u8 {
         return error.FailedToAsStringCode;
     }
 
-    cpython.DecRef(bytecode);
-    cpython.Finalize();
-
     // construct the final pyc bytes
 
     const pyc_bytes = ptr.?[0..size];
@@ -41,6 +38,9 @@ pub fn parse(source: [:0]const u8, allocator: std.mem.Allocator) ![]const u8 {
     try writer.writeInt(u32, timestamp, .little);
     try writer.writeInt(u32, @intCast(source.len), .little);
     try writer.writeAll(pyc_bytes);
+
+    cpython.DecRef(bytecode);
+    cpython.Finalize();
 
     return bytes;
 }

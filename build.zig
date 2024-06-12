@@ -7,18 +7,13 @@ var @"enable-bench": ?bool = false;
 var backend: TraceBackend = .None;
 
 pub fn build(b: *std.Build) !void {
-    const query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});
-
-    // we don't support building cpython to another platform yet
-    if (!query.isNative()) {
-        @panic("cross-compilation isn't allowed");
-    }
+    const target = b.standardTargetOptions(.{});
 
     const exe = b.addExecutable(.{
         .name = "osmium",
         .root_source_file = b.path("src/main.zig"),
-        .target = b.graph.host,
+        .target = target,
         .optimize = optimize,
     });
 
@@ -55,7 +50,7 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("tracer", tracer_dep.module("tracer"));
 
     const cpython_step = b.step("cpython", "Builds libcpython for the host");
-    const cpython_path = try generateLibPython(b, cpython_step, optimize);
+    const cpython_path = try generateLibPython(b, cpython_step, target, optimize);
 
     exe.step.dependOn(cpython_step);
     exe.linkLibC();
@@ -112,33 +107,44 @@ fn generateOpCode(
 fn generateLibPython(
     b: *std.Build,
     step: *std.Build.Step,
+    target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !std.Build.LazyPath {
     const source = b.dependency("python", .{});
 
     // TODO: cache properly
-    const maybe_lib_path = try b.build_root.join(b.allocator, &.{ "zig-out", "lib", "libpython3.10.a" });
-    const result = if (std.fs.accessAbsolute(maybe_lib_path, .{})) true else |_| false;
-    if (result) {
-        return b.path("zig-out/lib/libpython3.10.a");
-    }
+    const rebuild = b.option(bool, "rebuild", "Re-build libpython?") orelse true;
+    if (!rebuild) return b.path("zig-out/lib/libpython3.10.a");
+
+    const target_triple = try target.result.linuxTriple(b.allocator);
 
     const configure_run = std.Build.Step.Run.create(b, "cpython-configure");
     configure_run.setCwd(source.path("."));
+
+    configure_run.setEnvironmentVariable("CC", b.fmt("{s} {s}", .{ b.graph.zig_exe, "cc" }));
+    configure_run.setEnvironmentVariable("CXX", b.fmt("{s} {s}", .{ b.graph.zig_exe, "c++" }));
+    configure_run.setEnvironmentVariable("CFLAGS", b.fmt("-target {s}", .{target_triple}));
+
     configure_run.addFileArg(source.path("configure"));
     configure_run.addArgs(&.{
         "--disable-shared",
         if (optimize == .Debug) "" else "--enable-optimizations",
     });
 
+    // TODO: we'll probably need this for more in-depth bindings
+    // configure_run.addArg(b.fmt("--host={s}", .{target_triple}));
+    // configure_run.addArg(b.fmt("--build={s}", .{try b.host.result.linuxTriple(b.allocator)}));
+
     const make_run = std.Build.Step.Run.create(b, "cpython-make");
     make_run.setCwd(source.path("."));
+    configure_run.setEnvironmentVariable("CFLAGS", b.fmt("-target {s}", .{target_triple}));
     make_run.addArgs(&.{
         "make", b.fmt("-j{d}", .{cpu: {
             const cpu_set = try std.posix.sched_getaffinity(0);
             break :cpu std.posix.CPU_COUNT(cpu_set);
         }}),
     });
+    make_run.addArg("libpython3.10.a");
 
     make_run.step.dependOn(&configure_run.step);
     step.dependOn(&make_run.step);
