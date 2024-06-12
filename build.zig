@@ -121,6 +121,11 @@ fn generateLibPython(
     const configure_run = std.Build.Step.Run.create(b, "cpython-configure");
     configure_run.setCwd(source.path("."));
 
+    configure_run.setEnvironmentVariable("CONFIG_SITE", try b.build_root.join(
+        b.allocator,
+        &.{ "build/", b.fmt("config.site-{s}", .{target_triple}) },
+    ));
+    configure_run.setEnvironmentVariable("READELF", "llvm-readelf");
     configure_run.setEnvironmentVariable("CC", b.fmt("{s} {s}", .{ b.graph.zig_exe, "cc" }));
     configure_run.setEnvironmentVariable("CXX", b.fmt("{s} {s}", .{ b.graph.zig_exe, "c++" }));
     configure_run.setEnvironmentVariable("CFLAGS", b.fmt("-target {s}", .{target_triple}));
@@ -130,10 +135,9 @@ fn generateLibPython(
         "--disable-shared",
         if (optimize == .Debug) "" else "--enable-optimizations",
     });
-
-    // TODO: we'll probably need this for more in-depth bindings
-    // configure_run.addArg(b.fmt("--host={s}", .{target_triple}));
-    // configure_run.addArg(b.fmt("--build={s}", .{try b.host.result.linuxTriple(b.allocator)}));
+    configure_run.addArg(b.fmt("--host={s}", .{target_triple}));
+    configure_run.addArg(b.fmt("--build={s}", .{try b.host.result.linuxTriple(b.allocator)}));
+    configure_run.addArg("--disable-ipv6");
 
     const make_run = std.Build.Step.Run.create(b, "cpython-make");
     make_run.setCwd(source.path("."));
