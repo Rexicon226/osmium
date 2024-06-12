@@ -7,8 +7,7 @@ const Manager = @This();
 
 const tracer = @import("tracer");
 
-// const Tokenizer = @import("frontend/tokenizer/Tokenizer.zig");
-// const Parser = @import("frontend/Parser.zig");
+const Python = @import("frontend/Python.zig");
 
 const Marshal = @import("compiler/Marshal.zig");
 const Vm = @import("vm/Vm.zig");
@@ -30,7 +29,30 @@ pub fn run_pyc(manager: *Manager, file_name: []const u8) !void {
     defer t.end();
 
     // Open source file.
-    const source_file = try std.fs.cwd().openFile(file_name, .{});
+    const source_file = std.fs.cwd().openFile(file_name, .{}) catch |err| {
+        switch (err) {
+            error.FileNotFound => @panic("invalid file provided"),
+            else => |e| return e,
+        }
+    };
+    const source_file_size = (try source_file.stat()).size;
+    const source = try source_file.readToEndAlloc(manager.allocator, source_file_size);
+
+    // Parse the code object
+    const object = try Marshal.load(manager.allocator, source);
+
+    var vm = try Vm.init();
+    try vm.run(manager.allocator, object);
+}
+
+pub fn run_file(manager: *Manager, file_name: []const u8) !void {
+    const source_file = std.fs.cwd().openFile(file_name, .{ .lock = .exclusive }) catch |err| {
+        switch (err) {
+            error.FileNotFound => @panic("invalid file provided"),
+            else => |e| return e,
+        }
+    };
+    defer source_file.close();
 
     const source_file_size = (try source_file.stat()).size;
 
@@ -42,42 +64,9 @@ pub fn run_pyc(manager: *Manager, file_name: []const u8) !void {
         0,
     );
 
-    // Parse the code object
-    const object = try Marshal.load(manager.allocator, source);
+    const pyc = try Python.parse(source, manager.allocator);
+    const object = try Marshal.load(manager.allocator, pyc);
 
     var vm = try Vm.init();
     try vm.run(manager.allocator, object);
-}
-
-pub fn run_file(manager: *Manager, file_name: []const u8) !void {
-    _ = std.ChildProcess.run(.{
-        .allocator = manager.allocator,
-        .argv = &.{
-            "python3.10",
-            "-m",
-            "py_compile",
-            file_name,
-        },
-        .cwd = ".",
-        .expand_arg0 = .expand,
-    }) catch @panic("failed to side-run python");
-
-    // This outputs to __pycache__/file_name.cpython-310.pyc
-    const output_file_name: []const u8 = name: {
-        const trimmed_name: []const u8 = file_name[0 .. file_name.len - ".py".len];
-        const output_file = std.fs.path.basename(trimmed_name);
-
-        log.debug("Trimmed: {s}", .{trimmed_name});
-
-        const output_dir = std.fs.path.dirname(trimmed_name) orelse @panic("why in root");
-
-        const output_pyc = try std.fmt.allocPrint(manager.allocator, "{s}/__pycache__/{s}.cpython-310.pyc", .{ output_dir, output_file });
-
-        break :name output_pyc;
-    };
-
-    log.debug("File: {s}", .{output_file_name});
-
-    // Run python on that.
-    try manager.run_pyc(output_file_name);
 }

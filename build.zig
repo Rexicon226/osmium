@@ -2,33 +2,26 @@ const std = @import("std");
 
 const cases = @import("tests/cases.zig");
 
-var trace: ?bool = false;
+var trace: bool = false;
 var @"enable-bench": ?bool = false;
 var backend: TraceBackend = .None;
 
 pub fn build(b: *std.Build) !void {
-    const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const target = b.standardTargetOptions(.{});
 
     const exe = b.addExecutable(.{
         .name = "osmium",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    // Deps
-    const std_extras = b.addModule("std-extras", .{
-        .root_source_file = .{ .path = "src/std-extra/std.zig" },
-    });
-
-    exe.root_module.addImport("std-extras", std_extras);
-
     trace = b.option(bool, "trace",
         \\Enables tracing of the compiler using the default backend (spall)
-    );
+    ) orelse false;
 
-    if (trace) |_| {
+    if (trace) {
         backend = b.option(TraceBackend, "trace-backend",
             \\Switch between what backend to use. None is default.
         ) orelse backend;
@@ -46,8 +39,7 @@ pub fn build(b: *std.Build) !void {
     exe.use_lld = use_llvm;
 
     const exe_options = b.addOptions();
-
-    exe_options.addOption(bool, "trace", trace orelse false);
+    exe_options.addOption(bool, "trace", trace);
     exe_options.addOption(TraceBackend, "backend", backend);
     exe_options.addOption(std.log.Level, "debug_log", debug_log);
     exe_options.addOption(usize, "src_file_trimlen", std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?.len);
@@ -56,8 +48,16 @@ pub fn build(b: *std.Build) !void {
 
     const tracer_dep = b.dependency("tracer", .{});
     exe.root_module.addImport("tracer", tracer_dep.module("tracer"));
-    // exe.linkLibC(); // Needs libc.
 
+    const cpython_step = b.step("cpython", "Builds libcpython for the host");
+    const cpython_path = try generateLibPython(b, cpython_step, target, optimize);
+
+    exe.step.dependOn(cpython_step);
+    exe.linkLibC();
+    exe.addObjectFile(cpython_path);
+
+    const cpython_install = b.addInstallFile(cpython_path, "lib/libpython3.10.a");
+    b.getInstallStep().dependOn(&cpython_install.step);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -72,7 +72,7 @@ pub fn build(b: *std.Build) !void {
 
     // Generate steps
     const opcode_step = b.step("opcode", "Generate opcodes");
-    generateOpCode(b, opcode_step, target);
+    generateOpCode(b, opcode_step);
 
     // Test cases
     const test_step = b.step("test", "Test Osmium");
@@ -88,19 +88,70 @@ const TraceBackend = enum {
 fn generateOpCode(
     b: *std.Build,
     step: *std.Build.Step,
-    target: std.Build.ResolvedTarget,
 ) void {
     const translator = b.addExecutable(.{
         .name = "opcode2zig",
-        .root_source_file = .{ .path = "./tools/opcode2zig.zig" },
-        .target = target,
+        .root_source_file = b.path("tools/opcode2zig.zig"),
+        .target = b.graph.host,
         .optimize = .ReleaseFast,
     });
 
     const run_cmd = b.addRunArtifact(translator);
 
-    run_cmd.addArg("includes/opcode.h");
+    run_cmd.addArg("vendor/opcode.h");
     run_cmd.addArg("src/compiler/opcodes.zig");
 
     step.dependOn(&run_cmd.step);
+}
+
+fn generateLibPython(
+    b: *std.Build,
+    step: *std.Build.Step,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) !std.Build.LazyPath {
+    const source = b.dependency("python", .{});
+
+    // TODO: cache properly
+    const rebuild = b.option(bool, "rebuild", "Re-build libpython?") orelse true;
+    if (!rebuild) return b.path("zig-out/lib/libpython3.10.a");
+
+    const target_triple = try target.result.linuxTriple(b.allocator);
+
+    const configure_run = std.Build.Step.Run.create(b, "cpython-configure");
+    configure_run.setCwd(source.path("."));
+
+    configure_run.setEnvironmentVariable("CONFIG_SITE", try b.build_root.join(
+        b.allocator,
+        &.{ "build/", b.fmt("config.site-{s}", .{target_triple}) },
+    ));
+    configure_run.setEnvironmentVariable("READELF", "llvm-readelf");
+    configure_run.setEnvironmentVariable("CC", b.fmt("{s} {s}", .{ b.graph.zig_exe, "cc" }));
+    configure_run.setEnvironmentVariable("CXX", b.fmt("{s} {s}", .{ b.graph.zig_exe, "c++" }));
+    configure_run.setEnvironmentVariable("CFLAGS", b.fmt("-target {s}", .{target_triple}));
+
+    configure_run.addFileArg(source.path("configure"));
+    configure_run.addArgs(&.{
+        "--disable-shared",
+        if (optimize == .Debug) "" else "--enable-optimizations",
+    });
+    configure_run.addArg(b.fmt("--host={s}", .{target_triple}));
+    configure_run.addArg(b.fmt("--build={s}", .{try b.host.result.linuxTriple(b.allocator)}));
+    configure_run.addArg("--disable-ipv6");
+
+    const make_run = std.Build.Step.Run.create(b, "cpython-make");
+    make_run.setCwd(source.path("."));
+    configure_run.setEnvironmentVariable("CFLAGS", b.fmt("-target {s}", .{target_triple}));
+    make_run.addArgs(&.{
+        "make", b.fmt("-j{d}", .{cpu: {
+            const cpu_set = try std.posix.sched_getaffinity(0);
+            break :cpu std.posix.CPU_COUNT(cpu_set);
+        }}),
+    });
+    make_run.addArg("libpython3.10.a");
+
+    make_run.step.dependOn(&configure_run.step);
+    step.dependOn(&make_run.step);
+
+    return source.path("libpython3.10.a");
 }

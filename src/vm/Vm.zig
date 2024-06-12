@@ -16,7 +16,7 @@ const Marshal = @import("../compiler/Marshal.zig");
 const Object = @import("Object.zig");
 const Vm = @This();
 
-const builtins = @import("../builtins.zig");
+const builtins = @import("builtins.zig");
 
 const log = std.log.scoped(.vm);
 
@@ -124,10 +124,13 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .LOAD_FAST => try vm.execLoadFast(inst),
 
         .BUILD_LIST => try vm.execBuildList(inst),
+        .BUILD_SET => try vm.execBuildSet(inst),
 
         .STORE_NAME => try vm.execStoreName(inst),
         .STORE_SUBSCR => try vm.execStoreSubScr(),
         .STORE_FAST => try vm.execStoreFast(inst),
+
+        .SET_UPDATE => try vm.execSetUpdate(inst),
 
         .RETURN_VALUE => try vm.execReturnValue(),
 
@@ -213,10 +216,23 @@ fn execReturnValue(vm: *Vm) !void {
 }
 
 fn execBuildList(vm: *Vm, inst: Instruction) !void {
-    const objects = try vm.popNObjects(inst.extra);
-    const list = std.ArrayListUnmanaged(Object).fromOwnedSlice(objects);
+    const count = inst.extra;
 
-    const val = try Object.create(.list, vm.allocator, .{ .list = list });
+    if (count == 0) return;
+    _ = vm;
+
+    @panic("TODO: execBuildList count != 0");
+}
+
+fn execBuildSet(vm: *Vm, inst: Instruction) !void {
+    const objects = try vm.popNObjects(inst.extra);
+    var list = std.AutoHashMapUnmanaged(Object, void){};
+
+    for (objects) |object| {
+        try list.put(vm.allocator, object, {});
+    }
+
+    const val = try Object.create(.set, vm.allocator, .{ .set = list, .frozen = false });
     try vm.stack.append(vm.allocator, val);
 }
 
@@ -386,6 +402,17 @@ fn execStoreFast(vm: *Vm, inst: Instruction) !void {
     vm.current_co.varnames[var_num] = tos;
 }
 
+fn execSetUpdate(vm: *Vm, inst: Instruction) !void {
+    const seq = vm.stack.pop();
+    const target = vm.stack.items[vm.stack.items.len - inst.extra];
+    try target.callMemberFunction(
+        vm,
+        "update",
+        try vm.allocator.dupe(Object, &.{seq}),
+        null,
+    );
+}
+
 fn execPopJump(vm: *Vm, inst: Instruction, case: bool) !void {
     const tos = vm.stack.pop();
 
@@ -456,6 +483,18 @@ pub fn loadConst(allocator: Allocator, inst: Marshal.Result) !Object {
         },
         .CodeObject => |co| {
             return Object.create(.codeobject, allocator, .{ .co = co });
+        },
+        .Set => |set_struct| {
+            const set = set_struct.set;
+
+            var items = std.AutoHashMapUnmanaged(Object, void){};
+            for (set) |elem| {
+                try items.put(allocator, try loadConst(allocator, elem), {});
+            }
+            return Object.create(.set, allocator, .{
+                .set = items,
+                .frozen = set_struct.frozen,
+            });
         },
         else => std.debug.panic("TODO: loadConst {s}", .{@tagName(inst)}),
     }

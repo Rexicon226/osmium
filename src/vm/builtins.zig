@@ -4,9 +4,9 @@
 const std = @import("std");
 const tracer = @import("tracer");
 
-const Object = @import("vm/Object.zig");
+const Object = @import("Object.zig");
 
-const Vm = @import("vm/Vm.zig");
+const Vm = @import("Vm.zig");
 const fatal = @import("panic.zig").fatal;
 
 pub const KW_Type = std.StringHashMap(Object);

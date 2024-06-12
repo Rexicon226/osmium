@@ -1,5 +1,11 @@
-def a(x):
-    return x * 2
+a = 1
+b = 2
+c = a + b
 
-b = a(10)
-print(b)
+print(c)
+
+a = 1
+b = a + 2
+a += 1
+
+print(a, b)
