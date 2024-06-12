@@ -13,7 +13,7 @@ pub const KW_Type = std.StringHashMap(Object);
 
 pub const BuiltinError = error{OutOfMemory};
 
-pub const func_proto = fn (*Vm, []Object, kw: ?KW_Type) BuiltinError!void;
+pub const func_proto = fn (*Vm, []const Object, kw: ?KW_Type) BuiltinError!void;
 
 /// https://docs.python.org/3.10/library/functions.html
 pub const builtin_fns = &.{
@@ -21,10 +21,19 @@ pub const builtin_fns = &.{
     .{ "abs", abs },
     .{ "bool", boolBuiltin },
     .{ "print", print },
+    .{ "getattr", getattr },
+    .{ "__import__", __import__ },
     // // zig fmt: on
 };
 
-fn abs(vm: *Vm, args: []Object, kw: ?KW_Type) BuiltinError!void {
+pub fn getBuiltin(name: []const u8) *const func_proto {
+    inline for (builtin_fns) |builtin_fn| {
+        if (std.mem.eql(u8, name, builtin_fn[0])) return builtin_fn[1];
+    }
+    std.debug.panic("getBuiltin name {s}", .{name});
+}
+
+fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     if (null != kw) fatal("abs() has no kw args", .{});
 
     const t = tracer.trace(@src(), "builtin-abs", .{});
@@ -39,7 +48,7 @@ fn abs(vm: *Vm, args: []Object, kw: ?KW_Type) BuiltinError!void {
             .int => {
                 var int = arg.get(.int).int;
                 int.abs();
-                const abs_val = try Object.create(.int, vm.allocator, .{ .int = int });
+                const abs_val = try vm.createObject(.int, .{ .int = int });
                 break :value abs_val;
             },
             else => fatal("cannot abs() on type: {s}", .{@tagName(arg.tag)}),
@@ -49,7 +58,7 @@ fn abs(vm: *Vm, args: []Object, kw: ?KW_Type) BuiltinError!void {
     try vm.stack.append(vm.allocator, val);
 }
 
-fn print(vm: *Vm, args: []Object, maybe_kw: ?KW_Type) BuiltinError!void {
+fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-print", .{});
     defer t.end();
 
@@ -77,8 +86,28 @@ fn print(vm: *Vm, args: []Object, maybe_kw: ?KW_Type) BuiltinError!void {
 
     printSafe(stdout, "{s}", .{end_print});
 
-    const return_val = Object.init(.none);
+    const return_val = try vm.createObject(.none, null);
     try vm.stack.append(vm.allocator, return_val);
+}
+
+fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+    std.debug.assert(maybe_kw == null);
+    if (args.len != 2) fatal("getattr() takes exactly two arguments ({d} given)", .{args.len});
+
+    const obj = args[0];
+    const name_obj = args[1];
+    std.debug.assert(name_obj.tag == .string);
+    const name_string = name_obj.get(.string).string;
+
+    const attrs: std.StringHashMapUnmanaged(Object) = switch (obj.tag) {
+        .module => obj.get(.module).attrs,
+        else => fatal("getattr(), type {s} doesn't have any attributes", .{@tagName(obj.tag)}),
+    };
+
+    const attr_obj = attrs.get(name_string) orelse
+        fatal("object {} doesn't have an attribute named {s}", .{ obj, name_string });
+
+    try vm.stack.append(vm.allocator, attr_obj);
 }
 
 fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
@@ -88,7 +117,7 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
 }
 
 // /// https://docs.python.org/3.10/library/stdtypes.html#truth
-fn boolBuiltin(vm: *Vm, args: []Object, kw: ?KW_Type) BuiltinError!void {
+fn boolBuiltin(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-bool", .{});
     defer t.end();
 
@@ -127,6 +156,36 @@ fn boolBuiltin(vm: *Vm, args: []Object, kw: ?KW_Type) BuiltinError!void {
         }
     };
 
-    const val = try Object.create(.boolean, vm.allocator, .{ .boolean = value });
+    const val = try vm.createObject(.boolean, .{ .boolean = value });
     try vm.stack.append(vm.allocator, val);
+}
+
+fn __import__(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
+    _ = kw;
+
+    if (args.len != 1) fatal("__import__() takes exactly 1 arguments ({d} given)", .{args.len});
+    const mod_name_obj = args[0];
+    std.debug.assert(mod_name_obj.tag == .string);
+    const mod_name = mod_name_obj.get(.string).string;
+
+    const loaded_mod: Object.Payload.Module = file: {
+        {
+            // check builtin-modules first
+            const maybe_mod = vm.builtin_mods.get(mod_name);
+            if (maybe_mod) |mod| break :file mod;
+        }
+
+        // load sys.path to get a list of directories to search
+        const sys_mod = vm.builtin_mods.get("sys") orelse @panic("didn't init builtin-modules");
+        const sys_path = sys_mod.dict.get("path") orelse @panic("didn't init sys module correctly");
+        std.debug.assert(sys_path.tag == .list);
+
+        if (true) std.debug.panic("sys path: {}", .{sys_path});
+    };
+
+    const new_mod = try vm.createObject(
+        .module,
+        loaded_mod,
+    );
+    try vm.stack.append(vm.allocator, new_mod);
 }

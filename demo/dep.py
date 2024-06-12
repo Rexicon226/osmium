@@ -1,2 +1,1 @@
-def a():
-    print("hello world")
+a = 10

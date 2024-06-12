@@ -42,6 +42,8 @@ scopes: std.ArrayListUnmanaged(std.StringHashMapUnmanaged(Object)) = .{},
 
 crash_info: crash_report.VmContext,
 
+builtin_mods: std.StringHashMapUnmanaged(Object.Payload.Module) = .{},
+
 pub fn init(allocator: Allocator, co: *CodeObject) !Vm {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
@@ -52,6 +54,26 @@ pub fn init(allocator: Allocator, co: *CodeObject) !Vm {
         .current_co = co,
         .crash_info = crash_report.prepVmContext(co),
     };
+}
+
+pub fn initBuiltinMods(vm: *Vm, root_dir_path: []const u8) !void {
+    const root_dir = try std.fs.cwd().openDir(root_dir_path, .{});
+    const root_dir_abs_path = try root_dir.realpathAlloc(vm.allocator, ".");
+
+    {
+        // sys module
+        var attrs: std.StringHashMapUnmanaged(Object) = .{};
+        var path_dirs: std.ArrayListUnmanaged(Object) = .{};
+
+        try path_dirs.append(
+            vm.allocator,
+            try vm.createObject(.string, .{ .string = root_dir_abs_path }),
+        );
+
+        const path_obj = try vm.createObject(.list, .{ .list = path_dirs });
+        try attrs.put(vm.allocator, "path", path_obj);
+        try vm.builtin_mods.put(vm.allocator, "sys", .{ .name = "sys", .attrs = attrs });
+    }
 }
 
 /// Creates an Arena around `alloc` and runs the main object.
@@ -117,6 +139,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .LOAD_METHOD => try vm.execLoadMethod(inst),
         .LOAD_GLOBAL => try vm.execLoadGlobal(inst),
         .LOAD_FAST => try vm.execLoadFast(inst),
+        .LOAD_ATTR => try vm.execLoadAttr(inst),
 
         .BUILD_LIST => try vm.execBuildList(inst),
         .BUILD_SET => try vm.execBuildSet(inst),
@@ -149,6 +172,9 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 
         .ROT_TWO => try vm.execRotTwo(inst),
 
+        .IMPORT_NAME => try vm.execImportName(inst),
+        .IMPORT_FROM => try vm.execImportFrom(inst),
+
         else => std.debug.panic("TODO: {s}", .{@tagName(inst.op)}),
     }
 }
@@ -172,7 +198,7 @@ fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
 
     const tos = vm.stack.pop();
 
-    const func = try tos.getMemberFunction(name, vm) orelse std.debug.panic(
+    const func = try tos.getMemberFunction(name, vm.allocator) orelse std.debug.panic(
         "couldn't find '{s}.{s}'",
         .{ @tagName(tos.tag), name },
     );
@@ -193,6 +219,18 @@ fn execLoadFast(vm: *Vm, inst: Instruction) !void {
     const obj = vm.current_co.varnames[var_num];
     log.debug("LoadFast obj tag: {s}", .{@tagName(obj.tag)});
     try vm.stack.append(vm.allocator, obj);
+}
+
+fn execLoadAttr(vm: *Vm, inst: Instruction) !void {
+    const obj = vm.stack.pop();
+    const name = vm.current_co.names[inst.extra];
+    assert(name == .String);
+    const name_string = name.String;
+
+    const name_obj = try vm.createObject(.string, .{ .string = name_string });
+
+    const getattr_ptr = builtins.getBuiltin("getattr");
+    try @call(.auto, getattr_ptr, .{ vm, &.{ obj, name_obj }, null });
 }
 
 fn execStoreName(vm: *Vm, inst: Instruction) !void {
@@ -246,7 +284,6 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
     switch (func_object.tag) {
         .zig_function => {
             const func_ptr = func_object.get(.zig_function);
-
             try @call(.auto, func_ptr.*, .{ vm, args, null });
         },
         .function => {
@@ -467,6 +504,36 @@ fn execRotTwo(vm: *Vm, inst: Instruction) !void {
     try vm.stack.insert(vm.allocator, vm.stack.items.len - 1, bottom);
 }
 
+fn execImportName(vm: *Vm, inst: Instruction) !void {
+    const mod_name = vm.current_co.names[inst.extra];
+    const from_list = vm.stack.pop();
+    const level = vm.stack.pop();
+
+    // from_list can be None
+    assert(level.tag == .int);
+
+    const name_obj = try vm.createObject(.string, .{ .string = mod_name.String });
+
+    var kw_args = builtins.KW_Type.init(vm.allocator);
+    defer kw_args.deinit();
+
+    // zig fmt: off
+    try kw_args.put("globals",  try vm.createObject(.none, null));
+    try kw_args.put("locals",   try vm.createObject(.none, null));
+    try kw_args.put("fromlist", from_list);
+    try kw_args.put("level",    level);
+    // zig fmt: on
+
+    const import_zig_fn = builtins.getBuiltin("__import__");
+    try @call(.auto, import_zig_fn, .{ vm, &.{name_obj}, kw_args });
+}
+
+fn execImportFrom(vm: *Vm, inst: Instruction) !void {
+    const attr_name = vm.current_co.names[inst.extra];
+
+    _ = attr_name;
+}
+
 // Helpers
 
 /// Pops `n` items off the stack in reverse order and returns them.
@@ -557,10 +624,10 @@ fn lookUpwards(vm: *Vm, name: []const u8) ?Object {
     };
 }
 
-fn createObject(
+pub fn createObject(
     vm: *Vm,
     comptime tag: Object.Tag,
-    data: ?Object.Data(tag),
+    data: ?(if (@intFromEnum(tag) >= Object.Tag.first_payload) Object.Data(tag) else void),
 ) error{OutOfMemory}!Object {
     const has_payload = @intFromEnum(tag) >= Object.Tag.first_payload;
     if (data == null and has_payload)

@@ -71,5 +71,7 @@ pub fn run_file(manager: *Manager, file_name: []const u8) !void {
     const object = try Marshal.load(manager.allocator, pyc);
 
     var vm = try Vm.init(manager.allocator, object);
+    try vm.initBuiltinMods(std.fs.path.dirname(file_name) orelse
+        @panic("passed in dir instead of file"));
     try vm.run();
 }

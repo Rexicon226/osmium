@@ -29,7 +29,7 @@ payload: ?(*align(blk: {
 pub const Tag = enum(usize) {
     pub const first_payload = @intFromEnum(Tag.int);
 
-    // Note: this is the literal None type.
+    /// Note: this is the literal None type.
     none,
 
     int,
@@ -46,6 +46,8 @@ pub const Tag = enum(usize) {
 
     codeobject,
     function,
+
+    module,
 
     pub fn PayloadType(comptime t: Tag) type {
         assert(@intFromEnum(t) >= Tag.first_payload);
@@ -65,6 +67,8 @@ pub const Tag = enum(usize) {
             .zig_function => Payload.ZigFunc,
             .codeobject => Payload.CodeObject,
             .function => Payload.PythonFunction,
+
+            .module => Payload.Module,
 
             .none => unreachable,
             else => @compileError("TODO: PayloadType " ++ @tagName(t)),
@@ -96,7 +100,7 @@ pub fn get(object: *const Object, comptime t: Tag) *Data(t) {
     return @ptrCast(object.payload.?);
 }
 
-pub fn getMemberFunction(object: *const Object, name: []const u8, vm: *Vm) error{OutOfMemory}!?Object {
+pub fn getMemberFunction(object: *const Object, name: []const u8, allocator: Allocator) error{OutOfMemory}!?Object {
     const member_list: Payload.MemberFuncTy = switch (object.tag) {
         .list => Payload.List.MemberFns,
         .set => Payload.Set.MemberFns,
@@ -105,7 +109,7 @@ pub fn getMemberFunction(object: *const Object, name: []const u8, vm: *Vm) error
     for (member_list) |func| {
         if (std.mem.eql(u8, func.name, name)) {
             const func_ptr = func.func;
-            return try Object.create(.zig_function, vm.allocator, func_ptr);
+            return try Object.create(.zig_function, allocator, func_ptr);
         }
     }
     return null;
@@ -118,7 +122,7 @@ pub fn callMemberFunction(
     args: []Object,
     kw: ?builtins.KW_Type,
 ) !void {
-    const func = try object.getMemberFunction(name, vm) orelse return error.NotAMemberFunction;
+    const func = try object.getMemberFunction(name, vm.allocator) orelse return error.NotAMemberFunction;
     const func_ptr = func.get(.zig_function);
     const self_args = try std.mem.concat(vm.allocator, Object, &.{ &.{object.*}, args });
     try @call(.auto, func_ptr.*, .{ vm, self_args, kw });
@@ -155,7 +159,7 @@ pub const Payload = union(enum) {
             .{ .name = "append", .func = append },
         };
 
-        fn append(vm: *Vm, args: []Object, kw: ?builtins.KW_Type) !void {
+        fn append(vm: *Vm, args: []const Object, kw: ?builtins.KW_Type) !void {
             if (null != kw) @panic("list.append() has no kw args");
 
             if (args.len != 2) std.debug.panic("list.append() takes exactly 1 argument ({d} given)", .{args.len - 1});
@@ -181,15 +185,15 @@ pub const Payload = union(enum) {
         set: std.AutoHashMapUnmanaged(Object, void),
         frozen: bool,
 
+        // zig fmt: off
         pub const MemberFns: MemberFuncTy = &.{
-            // zig fmt: off
             .{ .name = "update", .func = update },
             .{ .name = "add"   , .func = add    },
-            // zig fmt: on
         };
+          // zig fmt: on
 
         /// Appends a set or iterable object.
-        fn update(vm: *Vm, args: []Object, kw: ?builtins.KW_Type) !void {
+        fn update(vm: *Vm, args: []const Object, kw: ?builtins.KW_Type) !void {
             if (null != kw) @panic("set.update() has no kw args");
 
             if (args.len != 2) std.debug.panic("set.update() takes exactly 1 argument ({d} given)", .{args.len - 1});
@@ -210,12 +214,19 @@ pub const Payload = union(enum) {
         }
 
         /// Appends an item.
-        fn add(vm: *Vm, args: []Object, kw: ?builtins.KW_Type) !void {
+        fn add(vm: *Vm, args: []const Object, kw: ?builtins.KW_Type) !void {
             if (null != kw) @panic("set.add() has no kw args");
 
             if (args.len != 2) std.debug.panic("set.add() takes exactly 1 argument ({d} given)", .{args.len - 1});
             _ = vm;
         }
+    };
+
+    pub const Module = struct {
+        name: []const u8,
+        file: ?[]const u8 = null,
+        dict: std.StringHashMapUnmanaged(Object) = .{},
+        attrs: std.StringHashMapUnmanaged(Object) = .{},
     };
 };
 
@@ -276,12 +287,17 @@ pub fn format(
             try writer.writeAll("{");
 
             var i: u32 = 0;
-            while (iter.next()) |obj| : (i += 1){
+            while (iter.next()) |obj| : (i += 1) {
                 try writer.print("{}", .{obj});
                 if (i < set_len - 1) try writer.writeAll(", ");
             }
 
             try writer.writeAll("}");
+        },
+        .module => {
+            const module = object.get(.module);
+
+            try writer.print("<module '{s}'>", .{module.name});
         },
 
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),

@@ -1,3 +1,3 @@
-from dep import a
+import sys
 
-a()
+print(sys.path)
