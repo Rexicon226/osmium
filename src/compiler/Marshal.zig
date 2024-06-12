@@ -219,6 +219,7 @@ fn read_codeobject(marshal: *Marshal) Result {
     const varname_tuple = dict.get("varnames").?.Tuple;
     const varnames = marshal.allocator.alloc(Object, varname_tuple.len) catch @panic("OOM");
     for (varname_tuple, 0..) |elem, i| {
+        // we use the VM as a single point of truth
         varnames[i] = Vm.loadConst(marshal.allocator, elem) catch @panic("OOM");
     }
     co.varnames = varnames;

@@ -11,34 +11,19 @@ const FlagRef = Marshal.FlagRef;
 
 const CodeObject = @This();
 
-/// File name
 filename: []const u8,
-
-/// Arguments
 argcount: u32,
-
-/// Constants
 consts: []const Result,
 
-/// Names
 names: []const Result,
-
-/// Code Object name
 name: []const u8,
-
-/// Stack Size
 stack_size: u32,
-
-/// ByteCode
 code: []const u8,
-
 varnames: []Object,
-
-// Interal reference table.
 flag_refs: []const ?FlagRef,
 
 /// Only exist after `co.process()` is run.
-instructions: []Instruction = undefined,
+instructions: ?[]Instruction = null,
 
 /// Where the VM is at in running this CodeObject
 index: usize = 0,
@@ -51,19 +36,20 @@ pub fn format(
 ) !void {
     std.debug.assert(fmt.len == 0);
 
-    try writer.print("Name: {s}\n", .{self.name});
-    try writer.print("Filename: {s}\n", .{self.filename});
-    try writer.print("Argument count: {d}\n", .{self.argcount});
-    try writer.print("Stack size: {d}\n", .{self.stack_size});
+    // print out the metadata about the CodeObject
+    try writer.print("Name:\t\t{s}\n", .{self.name});
+    try writer.print("Filename:\t{s}\n", .{self.filename});
+    try writer.print("Argument count:\t{d}\n", .{self.argcount});
+    try writer.print("Stack size:\t{d}\n", .{self.stack_size});
 
-    try writer.print("Consts:\n", .{});
-    for (self.consts) |con| {
-        try writer.print("\t{}\n", .{con.fmt(self)});
+    try writer.writeAll("Constants:\n");
+    for (self.consts, 0..) |con, i| {
+        try writer.print("\t{d}: {}\n", .{ i, con.fmt(self) });
     }
 
-    try writer.print("Names:\n", .{});
-    for (self.names) |name| {
-        try writer.print("\t{}\n", .{name.fmt(self)});
+    try writer.writeAll("Names:\n");
+    for (self.names, 0..) |con, i| {
+        try writer.print("\t{d}: {}\n", .{ i, con.fmt(self) });
     }
 }
 

@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) !void {
     if (trace) {
         backend = b.option(TraceBackend, "trace-backend",
             \\Switch between what backend to use. None is default.
-        ) orelse backend;
+        ) orelse .None;
     }
 
     const use_llvm = b.option(bool, "use-llvm",
@@ -35,6 +35,12 @@ pub fn build(b: *std.Build) !void {
         \\Enable debug logging.
     ) orelse .info;
 
+    const enable_debug_extensions = b.option(
+        bool,
+        "debug-extensions",
+        "Enable commands and options useful for debugging the compiler",
+    ) orelse (optimize == .Debug);
+
     exe.use_llvm = use_llvm;
     exe.use_lld = use_llvm;
 
@@ -43,7 +49,7 @@ pub fn build(b: *std.Build) !void {
     exe_options.addOption(TraceBackend, "backend", backend);
     exe_options.addOption(std.log.Level, "debug_log", debug_log);
     exe_options.addOption(usize, "src_file_trimlen", std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?.len);
-
+    exe_options.addOption(bool, "enable_debug_extensions", enable_debug_extensions);
     exe.root_module.addOptions("options", exe_options);
 
     const tracer_dep = b.dependency("tracer", .{});
@@ -57,6 +63,7 @@ pub fn build(b: *std.Build) !void {
     exe.addObjectFile(cpython_path);
 
     const cpython_install = b.addInstallFile(cpython_path, "lib/libpython3.10.a");
+    cpython_install.step.dependOn(cpython_step);
     b.getInstallStep().dependOn(&cpython_install.step);
     b.installArtifact(exe);
 
@@ -143,15 +150,11 @@ fn generateLibPython(
     make_run.setCwd(source.path("."));
     configure_run.setEnvironmentVariable("CFLAGS", b.fmt("-target {s}", .{target_triple}));
     make_run.addArgs(&.{
-        "make", b.fmt("-j{d}", .{cpu: {
-            const cpu_set = try std.posix.sched_getaffinity(0);
-            break :cpu std.posix.CPU_COUNT(cpu_set);
-        }}),
+        "make", b.fmt("-j{d}", .{try std.Thread.getCpuCount()}),
     });
     make_run.addArg("libpython3.10.a");
 
     make_run.step.dependOn(&configure_run.step);
     step.dependOn(&make_run.step);
-
     return source.path("libpython3.10.a");
 }

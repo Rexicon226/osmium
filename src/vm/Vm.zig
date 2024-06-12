@@ -12,6 +12,7 @@ const tracer = @import("tracer");
 const CodeObject = @import("../compiler/CodeObject.zig");
 const Instruction = @import("../compiler/Instruction.zig");
 const Marshal = @import("../compiler/Marshal.zig");
+const crash_report = @import("../crash_report.zig");
 
 const Object = @import("Object.zig");
 const Vm = @This();
@@ -27,7 +28,7 @@ current_co: *CodeObject,
 
 /// When we enter into a deeper scope, we push the previous code object
 /// onto here. Then when we leave it, we restore this one.
-co_stack: std.ArrayListUnmanaged(CodeObject) = .{},
+co_stack: std.SegmentedList(CodeObject, 1) = .{},
 
 /// When at `depth` 0, this is considered the global scope. loads will
 /// be targeted at the `global_scope`.
@@ -39,74 +40,68 @@ is_running: bool,
 stack: std.ArrayListUnmanaged(Object) = .{},
 scopes: std.ArrayListUnmanaged(std.StringHashMapUnmanaged(Object)) = .{},
 
-pub fn init() !Vm {
+crash_info: crash_report.VmContext,
+
+pub fn init(allocator: Allocator, co: *CodeObject) !Vm {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
     return .{
-        .allocator = undefined,
+        .allocator = allocator,
         .is_running = false,
-        .current_co = undefined,
+        .current_co = co,
+        .crash_info = crash_report.prepVmContext(co),
     };
 }
 
 /// Creates an Arena around `alloc` and runs the main object.
 pub fn run(
     vm: *Vm,
-    alloc: Allocator,
-    co: *CodeObject,
 ) !void {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
-    var arena = std.heap.ArenaAllocator.init(alloc);
+    // TODO: look into using a gc allocator here
+    var arena = std.heap.ArenaAllocator.init(vm.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
     vm.allocator = allocator;
 
-    // Setup
-    vm.scopes = .{};
-    vm.stack = .{};
-    vm.co_stack = .{};
-
     // The global scope
     const global_scope: std.StringHashMapUnmanaged(Object) = .{};
+    assert(vm.scopes.items.len == 0); // global scope must be the first
     try vm.scopes.append(vm.allocator, global_scope);
 
-    // The top level scope should be the global scope.
-    assert(vm.scopes.items.len == 1);
-
     // Generate instruction wrapper.
-    try co.process(vm.allocator);
-    vm.current_co = co;
+    try vm.current_co.process(vm.allocator);
 
     // Add the builtin functions to the scope.
     inline for (builtins.builtin_fns) |builtin_fn| {
         const name, const fn_ptr = builtin_fn;
-        const func_val = try Object.create(
-            .zig_function,
-            vm.allocator,
-            fn_ptr,
-        );
+        const func_val = try vm.createObject(.zig_function, fn_ptr);
         try vm.scopes.items[0].put(vm.allocator, name, func_val);
     }
 
     vm.is_running = true;
 
+    vm.crash_info.push();
+    defer vm.crash_info.pop();
+
     while (vm.is_running) {
-        const instruction = co.instructions[vm.current_co.index];
+        vm.crash_info.setIndex(vm.current_co.index);
+        const instructions = vm.current_co.instructions.?;
+        const instruction = instructions[vm.current_co.index];
         log.debug(
-            "Executing Instruction: {} (stack_size={}, pc={}/{}, mem={s}, depth={})",
+            "Executing Instruction: {s} (stack_size={}, pc={}/{}, mem={s}, depth={})",
             .{
-                instruction.op,
+                @tagName(instruction.op),
                 vm.stack.items.len,
-                co.index,
-                co.instructions.len,
+                vm.current_co.index,
+                instructions.len,
                 std.fmt.fmtIntSizeDec(arena.state.end_index),
                 vm.depth,
             },
         );
-
         vm.current_co.index += 1;
         try vm.exec(instruction);
     }
@@ -149,6 +144,10 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .CALL_METHOD => try vm.execCallMethod(inst),
 
         .MAKE_FUNCTION => try vm.execMakeFunction(inst),
+
+        .UNPACK_SEQUENCE => try vm.execUnpackedSequence(inst),
+
+        .ROT_TWO => try vm.execRotTwo(inst),
 
         else => std.debug.panic("TODO: {s}", .{@tagName(inst.op)}),
     }
@@ -211,7 +210,11 @@ fn execReturnValue(vm: *Vm) !void {
     // Only the return value should be left.
     assert(vm.stack.items.len == 1);
 
-    vm.current_co.* = vm.co_stack.pop();
+    const new_co_index = vm.co_stack.len - 1;
+    const new_co = vm.co_stack.at(new_co_index);
+    vm.co_stack.len = new_co_index;
+
+    vm.setNewCo(new_co);
     vm.depth -= 1;
 }
 
@@ -232,7 +235,7 @@ fn execBuildSet(vm: *Vm, inst: Instruction) !void {
         try list.put(vm.allocator, object, {});
     }
 
-    const val = try Object.create(.set, vm.allocator, .{ .set = list, .frozen = false });
+    const val = try vm.createObject(.set, .{ .set = list, .frozen = false });
     try vm.stack.append(vm.allocator, val);
 }
 
@@ -240,29 +243,28 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
     const args = try vm.popNObjects(inst.extra);
 
     const func_object = vm.stack.pop();
+    switch (func_object.tag) {
+        .zig_function => {
+            const func_ptr = func_object.get(.zig_function);
 
-    if (func_object.tag == .zig_function) {
-        const func_ptr = func_object.get(.zig_function);
+            try @call(.auto, func_ptr.*, .{ vm, args, null });
+        },
+        .function => {
+            const func = func_object.get(.function);
+            try func.co.process(vm.allocator);
 
-        try @call(.auto, func_ptr.*, .{ vm, args, null });
-        return;
-    }
+            // derefs are here to make sure we save by-val
+            try vm.co_stack.append(vm.allocator, vm.current_co.*);
+            vm.setNewCo(func.co);
 
-    if (func_object.tag == .function) {
-        const func = func_object.get(.function);
-        try func.co.process(vm.allocator);
+            vm.depth += 1;
 
-        try vm.co_stack.append(vm.allocator, vm.current_co.*);
-
-        // TODO: questionable pass by value. doesn't work if it isn't, but it shouldn't be.
-        vm.current_co.* = func.co.*;
-
-        vm.depth += 1;
-
-        // Set the args.
-        for (args, 0..) |arg, i| {
-            vm.current_co.varnames[i] = arg;
-        }
+            // Set the args.
+            for (args, 0..) |arg, i| {
+                vm.current_co.varnames[i] = arg;
+            }
+        },
+        else => unreachable,
     }
 }
 
@@ -325,7 +327,7 @@ fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
         // TODO: more
     }
 
-    const result_val = try Object.create(.int, vm.allocator, .{ .int = result });
+    const result_val = try vm.createObject(.int, .{ .int = result });
     try vm.stack.append(vm.allocator, result_val);
 }
 
@@ -354,7 +356,7 @@ fn execCompareOperation(vm: *Vm, inst: Instruction) !void {
         // zig fmt: on
     };
 
-    const result_val = try Object.create(.boolean, vm.allocator, .{ .boolean = boolean });
+    const result_val = try vm.createObject(.boolean, .{ .boolean = boolean });
     try vm.stack.append(vm.allocator, result_val);
 }
 
@@ -438,12 +440,31 @@ fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
     const name = name_object.get(.string).string;
     const co = co_object.get(.codeobject).co;
 
-    const function = try Object.create(.function, vm.allocator, .{
+    const function = try vm.createObject(.function, .{
         .name = name,
         .co = co,
     });
 
     try vm.stack.append(vm.allocator, function);
+}
+
+fn execUnpackedSequence(vm: *Vm, inst: Instruction) !void {
+    const length = inst.extra;
+    const object = vm.stack.pop();
+    assert(object.tag == .tuple);
+
+    const values = object.get(.tuple).*;
+    assert(values.len == length);
+
+    for (0..length) |i| {
+        try vm.stack.append(vm.allocator, values[length - i - 1]);
+    }
+}
+
+fn execRotTwo(vm: *Vm, inst: Instruction) !void {
+    _ = inst;
+    const bottom = vm.stack.pop();
+    try vm.stack.insert(vm.allocator, vm.stack.items.len - 1, bottom);
 }
 
 // Helpers
@@ -534,4 +555,28 @@ fn lookUpwards(vm: *Vm, name: []const u8) ?Object {
 
         break :obj null;
     };
+}
+
+fn createObject(
+    vm: *Vm,
+    comptime tag: Object.Tag,
+    data: ?Object.Data(tag),
+) error{OutOfMemory}!Object {
+    const has_payload = @intFromEnum(tag) >= Object.Tag.first_payload;
+    if (data == null and has_payload)
+        @panic("called vm.createObject without payload for payload tag");
+
+    return if (has_payload) Object.create(
+        tag,
+        vm.allocator,
+        data.?,
+    ) else Object.init(tag);
+}
+
+fn setNewCo(
+    vm: *Vm,
+    new_co: *CodeObject,
+) void {
+    vm.crash_info = crash_report.prepVmContext(new_co);
+    vm.current_co = new_co;
 }

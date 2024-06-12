@@ -1,6 +1,9 @@
 //! Inputs python source and outputs Bytecode
 
 pub fn parse(source: [:0]const u8, allocator: std.mem.Allocator) ![]const u8 {
+    const t = tracer.trace(@src(), "", .{});
+    defer t.end();
+
     // TODO: this just causes errors for now
     // const program = cpython.DecodeLocale(std.mem.span(std.os.argv[0]));
     // cpython.SetProgramName(program);
@@ -53,3 +56,4 @@ const std = @import("std");
 const log = std.log.scoped(.python);
 
 const cpython = @import("cpython.zig");
+const tracer = @import("tracer");

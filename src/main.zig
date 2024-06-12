@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const Manager = @import("Manager.zig");
+const crash_report = @import("crash_report.zig");
 
 const build_options = @import("options");
 
@@ -36,9 +37,14 @@ pub const std_options: std.Options = .{
         .err => .err,
         .debug => .debug,
     },
+    .enable_segfault_handler = false, // we have our own!
 };
 
+pub const panic = crash_report.panic;
+
 pub fn main() !u8 {
+    crash_report.initialize();
+
     defer {
         log.debug("memory usage: {}", .{arena.state.end_index});
 

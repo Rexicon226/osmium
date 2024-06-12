@@ -1,3 +1,5 @@
+const Object = @This();
+
 const std = @import("std");
 const Vm = @import("Vm.zig");
 const builtins = @import("builtins.zig");
@@ -7,12 +9,9 @@ const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
 const BigIntManaged = std.math.big.int.Managed;
 
-const assert = std.debug.assert;
-
-const Object = @This();
-
 const Allocator = std.mem.Allocator;
 
+const assert = std.debug.assert;
 const log = std.log.scoped(.object);
 
 tag: Tag,
@@ -28,7 +27,7 @@ payload: ?(*align(blk: {
 }) anyopaque),
 
 pub const Tag = enum(usize) {
-    const first_payload = @intFromEnum(Tag.int);
+    pub const first_payload = @intFromEnum(Tag.int);
 
     // Note: this is the literal None type.
     none,
