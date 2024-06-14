@@ -15,10 +15,12 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.object);
 
 tag: Tag,
-payload: union {
+payload: PayloadTy,
+
+const PayloadTy = union {
     single: *anyopaque,
     double: []void,
-},
+};
 
 pub const Tag = enum(usize) {
     pub const first_payload = @intFromEnum(Tag.int);
@@ -147,13 +149,26 @@ pub fn init(comptime t: Tag) Object {
 pub fn clone(object: *const Object, allocator: Allocator) !Object {
     assert(@intFromEnum(object.tag) >= Tag.first_payload);
 
-    const ptr: *anyopaque = switch (object.tag) {
+    const ptr: PayloadTy = switch (object.tag) {
         .none => unreachable,
         .float => unreachable,
+        .bool_true => unreachable,
+        .bool_false => unreachable,
+        inline .string, .tuple => |t| blk: {
+            const old_mem = object.get(t);
+            const new_ptr = try t.allocate(allocator, old_mem.len);
+
+            @memcpy(new_ptr, old_mem);
+            var payload_ptr: []void = undefined;
+
+            payload_ptr.len = old_mem.len;
+            payload_ptr.ptr = @ptrCast(new_ptr.ptr);
+            break :blk .{ .double = payload_ptr };
+        },
         inline else => |tag| blk: {
-            const new_ptr = try allocator.create(tag.PayloadType());
+            const new_ptr = try allocator.create(Data(tag));
             new_ptr.* = object.get(tag).*;
-            break :blk @ptrCast(new_ptr);
+            break :blk .{ .single = @ptrCast(new_ptr) };
         },
     };
     return .{ .tag = object.tag, .payload = ptr };

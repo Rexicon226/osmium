@@ -172,15 +172,26 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: []const u8) !void {
     defer allocator.free(source);
 
     gc.enable();
+    gc.setFindLeak(builtin.mode == .Debug);
     const gc_allocator = gc.allocator();
 
+    // by its nature this process is very difficult to not leak in and takes more perf
+    // to cleanup than to just pool.
+
+    const temp_arena = std.heap.ArenaAllocator.init(allocator);
     const pyc = try Python.parse(source, gc_allocator);
     var marshal = try Marshal.init(gc_allocator, pyc);
     const object = try marshal.parse();
-    var vm = try Vm.init(gc_allocator, object);
+    const owned_object = try object.clone(gc_allocator);
+    temp_arena.deinit();
+
+    var vm = try Vm.init(gc_allocator, owned_object);
     try vm.initBuiltinMods(std.fs.path.dirname(file_name) orelse
         @panic("passed in dir instead of file"));
 
     try vm.run();
     defer vm.deinit();
+
+    gc.disable();
+    gc.collect();
 }
