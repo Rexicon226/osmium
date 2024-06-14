@@ -172,7 +172,7 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: []const u8) !void {
     defer allocator.free(source);
 
     gc.enable();
-    gc.setFindLeak(builtin.mode == .Debug);
+    gc.setFindLeak(build_options.debug_log == .debug);
     const gc_allocator = gc.allocator();
 
     // by its nature this process is very difficult to not leak in and takes more perf
@@ -192,5 +192,5 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: []const u8) !void {
     try vm.run();
     defer vm.deinit();
 
-    if (build_options.debug_log == .debug) gc.collect();
+    gc.collect();
 }
