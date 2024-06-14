@@ -192,6 +192,5 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: []const u8) !void {
     try vm.run();
     defer vm.deinit();
 
-    gc.disable();
-    gc.collect();
+    if (build_options.debug_log == .debug) gc.collect();
 }

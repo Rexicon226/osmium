@@ -92,7 +92,7 @@ pub const Tag = enum(usize) {
     }
 
     pub fn getBool(tag: Tag) bool {
-        assert(!tag.isBool());
+        assert(tag.isBool());
         return switch (tag) {
             .bool_true => true,
             .bool_false => false,
