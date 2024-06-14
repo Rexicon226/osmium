@@ -42,9 +42,6 @@ fn format2(
     const inst = ctx.inst;
     const co = ctx.co;
 
-    const consts = co.consts;
-    const names = co.names;
-
     const extra = inst.extra;
 
     try writer.writeAll(@tagName(inst.op));
@@ -55,10 +52,11 @@ fn format2(
 
     switch (inst.op) {
         .LOAD_CONST,
-        => try writer.print("{d} ({})", .{ extra, consts[extra].fmt(co) }),
+        => try writer.print("{d} ({})", .{ extra, co.getConst(extra) }),
         .LOAD_NAME,
         .STORE_NAME,
-        => try writer.print("{d} ({})", .{ extra, names[extra].fmt(co) }),
+        .IMPORT_NAME,
+        => try writer.print("{d} ({s})", .{ extra, co.getName(extra) }),
         .CALL_FUNCTION,
         => try writer.print("{d}", .{extra}),
         else => try writer.print("TODO payload {d}", .{extra}),

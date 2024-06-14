@@ -52,8 +52,11 @@ pub fn build(b: *std.Build) !void {
     exe_options.addOption(bool, "enable_debug_extensions", enable_debug_extensions);
     exe.root_module.addOptions("options", exe_options);
 
-    const tracer_dep = b.dependency("tracer", .{});
+    const tracer_dep = b.dependency("tracer", .{ .optimize = optimize, .target = target });
     exe.root_module.addImport("tracer", tracer_dep.module("tracer"));
+
+    const libgc_dep = b.dependency("libgc", .{ .optimize = optimize, .target = target });
+    exe.root_module.addImport("gc", libgc_dep.module("gc"));
 
     const cpython_step = b.step("cpython", "Builds libcpython for the host");
     const cpython_path = try generateLibPython(b, cpython_step, target, optimize);

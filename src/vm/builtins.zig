@@ -5,13 +5,20 @@ const std = @import("std");
 const tracer = @import("tracer");
 
 const Object = @import("Object.zig");
+const Python = @import("../frontend/Python.zig");
+const Marshal = @import("../compiler/Marshal.zig");
 
 const Vm = @import("Vm.zig");
 const fatal = @import("panic.zig").fatal;
+const assert = std.debug.assert;
 
 pub const KW_Type = std.StringHashMap(Object);
 
-pub const BuiltinError = error{OutOfMemory};
+pub const BuiltinError =
+    error{OutOfMemory} ||
+    std.fs.File.OpenError ||
+    std.fs.File.ReadError ||
+    Python.Error;
 
 pub const func_proto = fn (*Vm, []const Object, kw: ?KW_Type) BuiltinError!void;
 
@@ -46,9 +53,9 @@ fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     const val = value: {
         switch (arg.tag) {
             .int => {
-                var int = arg.get(.int).int;
+                var int = arg.get(.int).*;
                 int.abs();
-                const abs_val = try vm.createObject(.int, .{ .int = int });
+                const abs_val = try vm.createObject(.int, int);
                 break :value abs_val;
             },
             else => fatal("cannot abs() on type: {s}", .{@tagName(arg.tag)}),
@@ -78,7 +85,7 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
             if (maybe_print_override) |print_override| {
                 if (print_override.tag != .string) fatal("print(end=) must be a string type", .{});
                 const payload = print_override.get(.string);
-                break :end_print payload.string;
+                break :end_print payload;
             }
         }
         break :end_print "\n";
@@ -91,20 +98,20 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
 }
 
 fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
-    std.debug.assert(maybe_kw == null);
+    assert(maybe_kw == null);
     if (args.len != 2) fatal("getattr() takes exactly two arguments ({d} given)", .{args.len});
 
     const obj = args[0];
     const name_obj = args[1];
-    std.debug.assert(name_obj.tag == .string);
-    const name_string = name_obj.get(.string).string;
+    assert(name_obj.tag == .string);
+    const name_string = name_obj.get(.string);
 
-    const attrs: std.StringHashMapUnmanaged(Object) = switch (obj.tag) {
-        .module => obj.get(.module).attrs,
+    const dict: std.StringHashMapUnmanaged(Object) = switch (obj.tag) {
+        .module => obj.get(.module).dict,
         else => fatal("getattr(), type {s} doesn't have any attributes", .{@tagName(obj.tag)}),
     };
 
-    const attr_obj = attrs.get(name_string) orelse
+    const attr_obj = dict.get(name_string) orelse
         fatal("object {} doesn't have an attribute named {s}", .{ obj, name_string });
 
     try vm.stack.append(vm.allocator, attr_obj);
@@ -116,7 +123,7 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
     };
 }
 
-// /// https://docs.python.org/3.10/library/stdtypes.html#truth
+/// https://docs.python.org/3.10/library/stdtypes.html#truth
 fn boolBuiltin(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-bool", .{});
     defer t.end();
@@ -128,35 +135,33 @@ fn boolBuiltin(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
 
     const arg = args[0];
 
-    const value: bool = value: {
-        switch (arg.tag) {
-            .none => break :value false,
+    const value: bool = switch (arg.tag) {
+        .none => false,
+        .bool_true => true,
+        .bool_false => false,
 
-            .boolean => {
-                const boolean = arg.get(.boolean).boolean;
-                break :value boolean;
-            },
+        .int => int: {
+            const int = arg.get(.int);
+            var zero = try std.math.big.int.Managed.initSet(vm.allocator, 0);
+            defer zero.deinit();
 
-            .int => {
-                const int = arg.get(.int).int;
-                var zero = try std.math.big.int.Managed.initSet(vm.allocator, 0);
-                defer zero.deinit();
+            if (int.eql(zero)) break :int false;
+            break :int true;
+        },
 
-                if (int.eql(zero)) break :value false;
-                break :value true;
-            },
+        .string => string: {
+            const string = arg.get(.string);
+            if (string.len == 0) break :string false;
+            break :string true;
+        },
 
-            .string => {
-                const string = arg.get(.string).string;
-                if (string.len == 0) break :value false;
-                break :value true;
-            },
-
-            else => fatal("bool() cannot take in type: {s}", .{@tagName(arg.tag)}),
-        }
+        else => fatal("bool() cannot take in type: {s}", .{@tagName(arg.tag)}),
     };
 
-    const val = try vm.createObject(.boolean, .{ .boolean = value });
+    const val = if (value)
+        try vm.createObject(.bool_true, null)
+    else
+        try vm.createObject(.bool_false, null);
     try vm.stack.append(vm.allocator, val);
 }
 
@@ -165,8 +170,8 @@ fn __import__(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
 
     if (args.len != 1) fatal("__import__() takes exactly 1 arguments ({d} given)", .{args.len});
     const mod_name_obj = args[0];
-    std.debug.assert(mod_name_obj.tag == .string);
-    const mod_name = mod_name_obj.get(.string).string;
+    assert(mod_name_obj.tag == .string);
+    const mod_name = mod_name_obj.get(.string);
 
     const loaded_mod: Object.Payload.Module = file: {
         {
@@ -177,10 +182,64 @@ fn __import__(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
 
         // load sys.path to get a list of directories to search
         const sys_mod = vm.builtin_mods.get("sys") orelse @panic("didn't init builtin-modules");
-        const sys_path = sys_mod.dict.get("path") orelse @panic("didn't init sys module correctly");
-        std.debug.assert(sys_path.tag == .list);
+        const sys_path_obj = sys_mod.dict.get("path") orelse @panic("didn't init sys module correctly");
+        assert(sys_path_obj.tag == .list);
 
-        if (true) std.debug.panic("sys path: {}", .{sys_path});
+        const sys_path_list = sys_path_obj.get(.list).list;
+        const sys_path_one = sys_path_list.items[0].get(.string);
+
+        // just search for relative single file modules,
+        // such as sys_path + mod_name + .py
+        const potential_name = try std.mem.concat(
+            vm.allocator,
+            u8,
+            &.{ sys_path_one, &.{std.fs.path.sep}, mod_name, ".py" },
+        );
+
+        // parse the file
+        const source_file = std.fs.cwd().openFile(potential_name, .{ .lock = .exclusive }) catch |err| {
+            switch (err) {
+                error.FileNotFound => @panic("invalid file provided"),
+                else => |e| return e,
+            }
+        };
+        defer source_file.close();
+        const source_file_size = (try source_file.stat()).size;
+        const source = try source_file.readToEndAllocOptions(
+            vm.allocator,
+            source_file_size,
+            source_file_size,
+            @alignOf(u8),
+            0,
+        );
+
+        const pyc = try Python.parse(source, vm.allocator);
+        var marshal = try Marshal.init(vm.allocator, pyc);
+        const object = try marshal.parse();
+
+        // create a new vm to evaluate  the global scope of the module
+        var mod_vm = try Vm.init(vm.allocator, object);
+        mod_vm.initBuiltinMods(std.fs.path.dirname(potential_name) orelse
+            @panic("passed in dir instead of file")) catch |err| {
+            std.debug.panic(
+                "failed to initialise built-in modules for module {s} with error {s}",
+                .{ mod_name, @errorName(err) },
+            );
+        };
+        mod_vm.run() catch |err| {
+            std.debug.panic(
+                "failed to evaluate module {s} with error {s}",
+                .{ mod_name, @errorName(err) },
+            );
+        };
+        defer mod_vm.deinit();
+        assert(mod_vm.is_running == false);
+
+        // convert all globals in the evaluated module to attrs
+        break :file .{
+            .name = mod_name,
+            .dict = try mod_vm.scopes.items[0].clone(vm.allocator),
+        };
     };
 
     const new_mod = try vm.createObject(

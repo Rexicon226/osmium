@@ -1,7 +1,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const Manager = @import("Manager.zig");
+const Python = @import("frontend/Python.zig");
+const Marshal = @import("compiler/Marshal.zig");
+const Vm = @import("vm/Vm.zig");
 const crash_report = @import("crash_report.zig");
 
 const build_options = @import("options");
@@ -14,11 +16,8 @@ pub const tracer_impl = switch (tracer_backend) {
     .None => tracer.none,
 };
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const gpa_allocator = gpa.allocator();
-
-var arena = std.heap.ArenaAllocator.init(gpa_allocator);
-const arena_allocator = arena.allocator();
+const gc = @import("gc");
+const GcAllocator = gc.GcAllocator;
 
 const log = std.log.scoped(.main);
 
@@ -45,10 +44,10 @@ pub const panic = crash_report.panic;
 pub fn main() !u8 {
     crash_report.initialize();
 
-    defer {
-        log.debug("memory usage: {}", .{arena.state.end_index});
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 16 }){};
+    const allocator = gpa.allocator();
 
-        arena.deinit();
+    defer {
         _ = gpa.deinit();
 
         if (tracer_backend != .None) {
@@ -58,14 +57,14 @@ pub fn main() !u8 {
     }
 
     if (tracer_backend != .None) {
-        try std.fs.cwd().makePath("./traces");
+        const dir = try std.fs.cwd().makeOpenPath("traces/");
 
         try tracer.init();
-        try tracer.init_thread(try std.fs.cwd().openDir("./traces", .{}));
+        try tracer.init_thread(dir);
     }
 
-    const args = try std.process.argsAlloc(gpa_allocator);
-    defer std.process.argsFree(gpa_allocator, args);
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
     if (args.len > 2) {
         usage();
@@ -107,11 +106,11 @@ pub fn main() !u8 {
     }
 
     if (options.file_path) |file_path| {
-        var manager = try Manager.init(arena_allocator);
-        defer manager.deinit();
-
-        if (options.is_pyc) try manager.run_pyc(file_path) else try manager.run_file(file_path);
-
+        if (options.is_pyc) {
+            @panic("TODO: support pyc files again");
+        } else {
+            try run_file(allocator, file_path);
+        }
         return 0;
     }
 
@@ -121,8 +120,6 @@ pub fn main() !u8 {
 }
 
 fn usage() void {
-    const stdout = std.io.getStdOut().writer();
-
     const usage_string =
         \\ 
         \\Usage:
@@ -133,6 +130,7 @@ fn usage() void {
         \\  --version, -v Print the version
     ;
 
+    const stdout = std.io.getStdOut().writer();
     stdout.print(usage_string, .{}) catch |err| {
         std.debug.panic("Failed to print usage: {}\n", .{err});
     };
@@ -148,4 +146,41 @@ fn versionPrint() void {
 
 fn isEqual(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
+}
+
+pub fn run_file(allocator: std.mem.Allocator, file_name: []const u8) !void {
+    const t = tracer.trace(@src(), "", .{});
+    defer t.end();
+
+    const source_file = std.fs.cwd().openFile(file_name, .{ .lock = .exclusive }) catch |err| {
+        switch (err) {
+            error.FileNotFound => @panic("invalid file provided"),
+            else => |e| return e,
+        }
+    };
+    defer source_file.close();
+
+    const source_file_size = (try source_file.stat()).size;
+
+    const source = try source_file.readToEndAllocOptions(
+        allocator,
+        source_file_size,
+        source_file_size,
+        @alignOf(u8),
+        0,
+    );
+    defer allocator.free(source);
+
+    gc.enable();
+    const gc_allocator = gc.allocator();
+
+    const pyc = try Python.parse(source, gc_allocator);
+    var marshal = try Marshal.init(gc_allocator, pyc);
+    const object = try marshal.parse();
+    var vm = try Vm.init(gc_allocator, object);
+    try vm.initBuiltinMods(std.fs.path.dirname(file_name) orelse
+        @panic("passed in dir instead of file"));
+
+    try vm.run();
+    defer vm.deinit();
 }

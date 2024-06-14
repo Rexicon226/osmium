@@ -1,6 +1,7 @@
 //! Virtual Machine that runs Python Bytecode blazingly fast
 
 const std = @import("std");
+const gc = @import("gc");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
@@ -24,11 +25,11 @@ const log = std.log.scoped(.vm);
 /// The VM's arena. All allocations during runtime should be made using this.
 allocator: Allocator,
 
-current_co: *CodeObject,
+co: CodeObject,
 
 /// When we enter into a deeper scope, we push the previous code object
 /// onto here. Then when we leave it, we restore this one.
-co_stack: std.SegmentedList(CodeObject, 1) = .{},
+co_stack: std.ArrayListUnmanaged(CodeObject) = .{},
 
 /// When at `depth` 0, this is considered the global scope. loads will
 /// be targeted at the `global_scope`.
@@ -37,22 +38,23 @@ depth: u32 = 0,
 /// VM State
 is_running: bool,
 
-stack: std.ArrayListUnmanaged(Object) = .{},
+stack: std.ArrayListUnmanaged(Object),
 scopes: std.ArrayListUnmanaged(std.StringHashMapUnmanaged(Object)) = .{},
 
 crash_info: crash_report.VmContext,
 
 builtin_mods: std.StringHashMapUnmanaged(Object.Payload.Module) = .{},
 
-pub fn init(allocator: Allocator, co: *CodeObject) !Vm {
+pub fn init(allocator: Allocator, co: CodeObject) !Vm {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
     return .{
         .allocator = allocator,
         .is_running = false,
-        .current_co = co,
+        .co = co,
         .crash_info = crash_report.prepVmContext(co),
+        .stack = try std.ArrayListUnmanaged(Object).initCapacity(allocator, co.stacksize),
     };
 }
 
@@ -62,17 +64,17 @@ pub fn initBuiltinMods(vm: *Vm, root_dir_path: []const u8) !void {
 
     {
         // sys module
-        var attrs: std.StringHashMapUnmanaged(Object) = .{};
+        var dict: std.StringHashMapUnmanaged(Object) = .{};
         var path_dirs: std.ArrayListUnmanaged(Object) = .{};
 
         try path_dirs.append(
             vm.allocator,
-            try vm.createObject(.string, .{ .string = root_dir_abs_path }),
+            try vm.createObject(.string, root_dir_abs_path),
         );
 
         const path_obj = try vm.createObject(.list, .{ .list = path_dirs });
-        try attrs.put(vm.allocator, "path", path_obj);
-        try vm.builtin_mods.put(vm.allocator, "sys", .{ .name = "sys", .attrs = attrs });
+        try dict.put(vm.allocator, "path", path_obj);
+        try vm.builtin_mods.put(vm.allocator, "sys", .{ .name = "sys", .dict = dict });
     }
 }
 
@@ -83,19 +85,13 @@ pub fn run(
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
-    // TODO: look into using a gc allocator here
-    var arena = std.heap.ArenaAllocator.init(vm.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    vm.allocator = allocator;
-
     // The global scope
     const global_scope: std.StringHashMapUnmanaged(Object) = .{};
     assert(vm.scopes.items.len == 0); // global scope must be the first
     try vm.scopes.append(vm.allocator, global_scope);
 
     // Generate instruction wrapper.
-    try vm.current_co.process(vm.allocator);
+    try vm.co.process(vm.allocator);
 
     // Add the builtin functions to the scope.
     inline for (builtins.builtin_fns) |builtin_fn| {
@@ -110,23 +106,50 @@ pub fn run(
     defer vm.crash_info.pop();
 
     while (vm.is_running) {
-        vm.crash_info.setIndex(vm.current_co.index);
-        const instructions = vm.current_co.instructions.?;
-        const instruction = instructions[vm.current_co.index];
+        vm.crash_info.setIndex(vm.co.index);
+        const instructions = vm.co.instructions.?;
+        const instruction = instructions[vm.co.index];
         log.debug(
-            "Executing Instruction: {s} (stack_size={}, pc={}/{}, mem={s}, depth={})",
+            "Executing Instruction: {s} (stack_size={}, pc={}/{}, depth={}, heap={})",
             .{
                 @tagName(instruction.op),
                 vm.stack.items.len,
-                vm.current_co.index,
+                vm.co.index,
                 instructions.len,
-                std.fmt.fmtIntSizeDec(arena.state.end_index),
                 vm.depth,
+                std.fmt.fmtIntSizeDec(gc.getHeapSize()),
             },
         );
-        vm.current_co.index += 1;
+        vm.co.index += 1;
         try vm.exec(instruction);
     }
+}
+
+pub fn deinit(vm: *Vm) void {
+    for (vm.scopes.items) |scope| {
+        var val_iter = scope.valueIterator();
+        while (val_iter.next()) |val| {
+            val.deinit(vm.allocator);
+        }
+    }
+    vm.scopes.deinit(vm.allocator);
+
+    for (vm.stack.items) |*obj| {
+        obj.deinit(vm.allocator);
+    }
+    vm.stack.deinit(vm.allocator);
+
+    for (vm.co_stack.items) |*co| {
+        co.deinit(vm.allocator);
+    }
+    vm.co_stack.deinit(vm.allocator);
+
+    var mod_iter = vm.builtin_mods.valueIterator();
+    while (mod_iter.next()) |mod| {
+        mod.deinit(vm.allocator);
+    }
+    vm.builtin_mods.deinit(vm.allocator);
+    vm.* = undefined;
 }
 
 fn exec(vm: *Vm, inst: Instruction) !void {
@@ -152,6 +175,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 
         .RETURN_VALUE => try vm.execReturnValue(),
 
+        .ROT_TWO => try vm.execRotTwo(),
+
         .POP_TOP => try vm.execPopTop(),
         .POP_JUMP_IF_TRUE => try vm.execPopJump(inst, true),
         .POP_JUMP_IF_FALSE => try vm.execPopJump(inst, false),
@@ -170,8 +195,6 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 
         .UNPACK_SEQUENCE => try vm.execUnpackedSequence(inst),
 
-        .ROT_TWO => try vm.execRotTwo(inst),
-
         .IMPORT_NAME => try vm.execImportName(inst),
         .IMPORT_FROM => try vm.execImportFrom(inst),
 
@@ -181,20 +204,19 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 
 /// Stores an immediate Constant on the stack.
 fn execLoadConst(vm: *Vm, inst: Instruction) !void {
-    const constant = vm.current_co.consts[inst.extra];
-    const val = try loadConst(vm.allocator, constant);
-    try vm.stack.append(vm.allocator, val);
+    const constant = vm.co.getConst(inst.extra);
+    try vm.stack.append(vm.allocator, constant);
 }
 
 fn execLoadName(vm: *Vm, inst: Instruction) !void {
-    const name = vm.current_co.getName(inst.extra);
+    const name = vm.co.getName(inst.extra);
     const val = vm.lookUpwards(name) orelse
         std.debug.panic("couldn't find '{s}'", .{name});
     try vm.stack.append(vm.allocator, val);
 }
 
 fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
-    const name = vm.current_co.getName(inst.extra);
+    const name = vm.co.getName(inst.extra);
 
     const tos = vm.stack.pop();
 
@@ -208,7 +230,7 @@ fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
 }
 
 fn execLoadGlobal(vm: *Vm, inst: Instruction) !void {
-    const name = vm.current_co.getName(inst.extra);
+    const name = vm.co.getName(inst.extra);
     const val = vm.scopes.items[0].get(name) orelse
         std.debug.panic("couldn't find '{s}' on the global scope", .{name});
     try vm.stack.append(vm.allocator, val);
@@ -216,25 +238,22 @@ fn execLoadGlobal(vm: *Vm, inst: Instruction) !void {
 
 fn execLoadFast(vm: *Vm, inst: Instruction) !void {
     const var_num = inst.extra;
-    const obj = vm.current_co.varnames[var_num];
-    log.debug("LoadFast obj tag: {s}", .{@tagName(obj.tag)});
+    const obj = vm.co.varnames[var_num];
     try vm.stack.append(vm.allocator, obj);
 }
 
 fn execLoadAttr(vm: *Vm, inst: Instruction) !void {
     const obj = vm.stack.pop();
-    const name = vm.current_co.names[inst.extra];
-    assert(name == .String);
-    const name_string = name.String;
+    const name_string = vm.co.getName(inst.extra);
 
-    const name_obj = try vm.createObject(.string, .{ .string = name_string });
+    const name_obj = try vm.createObject(.string, name_string);
 
     const getattr_ptr = builtins.getBuiltin("getattr");
     try @call(.auto, getattr_ptr, .{ vm, &.{ obj, name_obj }, null });
 }
 
 fn execStoreName(vm: *Vm, inst: Instruction) !void {
-    const name = vm.current_co.getName(inst.extra);
+    const name = vm.co.getName(inst.extra);
     const tos = vm.stack.pop();
     try vm.scopes.items[vm.depth].put(vm.allocator, name, tos);
 }
@@ -245,13 +264,7 @@ fn execReturnValue(vm: *Vm) !void {
         return;
     }
 
-    // Only the return value should be left.
-    assert(vm.stack.items.len == 1);
-
-    const new_co_index = vm.co_stack.len - 1;
-    const new_co = vm.co_stack.at(new_co_index);
-    vm.co_stack.len = new_co_index;
-
+    const new_co = vm.co_stack.pop();
     vm.setNewCo(new_co);
     vm.depth -= 1;
 }
@@ -267,7 +280,7 @@ fn execBuildList(vm: *Vm, inst: Instruction) !void {
 
 fn execBuildSet(vm: *Vm, inst: Instruction) !void {
     const objects = try vm.popNObjects(inst.extra);
-    var list = std.AutoHashMapUnmanaged(Object, void){};
+    var list: Object.Payload.Set.HashMap = .{};
 
     for (objects) |object| {
         try list.put(vm.allocator, object, {});
@@ -290,16 +303,21 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
             const func = func_object.get(.function);
             try func.co.process(vm.allocator);
 
-            // derefs are here to make sure we save by-val
-            try vm.co_stack.append(vm.allocator, vm.current_co.*);
-            vm.setNewCo(func.co);
+            // we don't allow for recursive function calls yet
+            const current_hash = vm.co.hash();
+            const new_hash = func.co.hash();
+            if (current_hash == new_hash) @panic("no recursive function calls yet");
 
-            vm.depth += 1;
+            // derefs are here to make sure we save by-val
+            try vm.co_stack.append(vm.allocator, vm.co);
+            vm.setNewCo(func.co);
 
             // Set the args.
             for (args, 0..) |arg, i| {
-                vm.current_co.varnames[i] = arg;
+                vm.co.varnames[i] = arg;
             }
+
+            vm.depth += 1;
         },
         else => unreachable,
     }
@@ -308,7 +326,7 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
 fn execCallFunctionKW(vm: *Vm, inst: Instruction) !void {
     const kw_tuple = vm.stack.pop();
     const kw_tuple_slice = if (kw_tuple.tag == .tuple)
-        kw_tuple.get(.tuple).*
+        kw_tuple.get(.tuple)
     else
         @panic("execCallFunctionKW tos tuple not tuple");
     const tuple_len = kw_tuple_slice.len;
@@ -317,7 +335,7 @@ fn execCallFunctionKW(vm: *Vm, inst: Instruction) !void {
     const kw_arg_objects = try vm.popNObjects(tuple_len);
 
     for (kw_tuple_slice, kw_arg_objects) |name_object, val| {
-        const name = name_object.get(.string).string;
+        const name = name_object.get(.string);
         try kw_args.put(name, val);
     }
 
@@ -352,19 +370,19 @@ fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
     assert(x.tag == .int);
     assert(y.tag == .int);
 
-    const x_int = x.get(.int).int;
-    const y_int = y.get(.int).int;
+    const x_int = x.get(.int);
+    const y_int = y.get(.int);
 
     var result = try BigIntManaged.init(vm.allocator);
 
     switch (op) {
-        .add => try result.add(&x_int, &y_int),
-        .sub => try result.sub(&x_int, &y_int),
-        .mul => try result.mul(&x_int, &y_int),
+        .add => try result.add(x_int, y_int),
+        .sub => try result.sub(x_int, y_int),
+        .mul => try result.mul(x_int, y_int),
         // TODO: more
     }
 
-    const result_val = try vm.createObject(.int, .{ .int = result });
+    const result_val = try vm.createObject(.int, result);
     try vm.stack.append(vm.allocator, result_val);
 }
 
@@ -375,8 +393,8 @@ fn execCompareOperation(vm: *Vm, inst: Instruction) !void {
     assert(x.tag == .int);
     assert(y.tag == .int);
 
-    const x_int = x.get(.int).int;
-    const y_int = y.get(.int).int;
+    const x_int = x.get(.int).*;
+    const y_int = y.get(.int).*;
 
     const order = y_int.order(x_int);
 
@@ -393,7 +411,10 @@ fn execCompareOperation(vm: *Vm, inst: Instruction) !void {
         // zig fmt: on
     };
 
-    const result_val = try vm.createObject(.boolean, .{ .boolean = boolean });
+    const result_val = if (boolean)
+        try vm.createObject(.bool_true, null)
+    else
+        try vm.createObject(.bool_false, null);
     try vm.stack.append(vm.allocator, result_val);
 }
 
@@ -417,7 +438,7 @@ fn execStoreSubScr(vm: *Vm) !void {
     }
 
     const list_payload = list.get(.list).list;
-    const index_int = try index.get(.int).int.to(i64);
+    const index_int = try index.get(.int).to(i64);
 
     if (list_payload.items.len < index_int) {
         std.debug.panic(
@@ -437,8 +458,7 @@ fn execStoreSubScr(vm: *Vm) !void {
 fn execStoreFast(vm: *Vm, inst: Instruction) !void {
     const var_num = inst.extra;
     const tos = vm.stack.pop();
-
-    vm.current_co.varnames[var_num] = tos;
+    vm.co.varnames[var_num] = tos;
 }
 
 fn execSetUpdate(vm: *Vm, inst: Instruction) !void {
@@ -454,14 +474,8 @@ fn execSetUpdate(vm: *Vm, inst: Instruction) !void {
 
 fn execPopJump(vm: *Vm, inst: Instruction, case: bool) !void {
     const tos = vm.stack.pop();
-
-    const tos_bool = if (tos.tag == .boolean)
-        tos.get(.boolean).boolean
-    else
-        @panic("PopJump TOS not bool");
-
-    if (tos_bool == case) {
-        vm.current_co.index = inst.extra;
+    if (tos.tag.getBool() == case) {
+        vm.co.index = inst.extra;
     }
 }
 
@@ -474,8 +488,8 @@ fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
     assert(name_object.tag == .string);
     assert(co_object.tag == .codeobject);
 
-    const name = name_object.get(.string).string;
-    const co = co_object.get(.codeobject).co;
+    const name = name_object.get(.string);
+    const co = co_object.get(.codeobject).*;
 
     const function = try vm.createObject(.function, .{
         .name = name,
@@ -490,7 +504,7 @@ fn execUnpackedSequence(vm: *Vm, inst: Instruction) !void {
     const object = vm.stack.pop();
     assert(object.tag == .tuple);
 
-    const values = object.get(.tuple).*;
+    const values = object.get(.tuple);
     assert(values.len == length);
 
     for (0..length) |i| {
@@ -498,21 +512,20 @@ fn execUnpackedSequence(vm: *Vm, inst: Instruction) !void {
     }
 }
 
-fn execRotTwo(vm: *Vm, inst: Instruction) !void {
-    _ = inst;
+fn execRotTwo(vm: *Vm) !void {
     const bottom = vm.stack.pop();
     try vm.stack.insert(vm.allocator, vm.stack.items.len - 1, bottom);
 }
 
 fn execImportName(vm: *Vm, inst: Instruction) !void {
-    const mod_name = vm.current_co.names[inst.extra];
+    const mod_name = vm.co.getName(inst.extra);
     const from_list = vm.stack.pop();
     const level = vm.stack.pop();
 
     // from_list can be None
     assert(level.tag == .int);
 
-    const name_obj = try vm.createObject(.string, .{ .string = mod_name.String });
+    const name_obj = try vm.createObject(.string, mod_name);
 
     var kw_args = builtins.KW_Type.init(vm.allocator);
     defer kw_args.deinit();
@@ -529,7 +542,7 @@ fn execImportName(vm: *Vm, inst: Instruction) !void {
 }
 
 fn execImportFrom(vm: *Vm, inst: Instruction) !void {
-    const attr_name = vm.current_co.names[inst.extra];
+    const attr_name = vm.co.getName(inst.extra);
 
     _ = attr_name;
 }
@@ -547,45 +560,6 @@ fn popNObjects(vm: *Vm, n: usize) ![]Object {
     }
 
     return objects;
-}
-
-pub fn loadConst(allocator: Allocator, inst: Marshal.Result) !Object {
-    switch (inst) {
-        .Int => |int| {
-            const big_int = try BigIntManaged.initSet(allocator, int);
-            return Object.create(.int, allocator, .{ .int = big_int });
-        },
-        .String => |string| {
-            return Object.create(.string, allocator, .{ .string = string });
-        },
-        .Bool => |boolean| {
-            return Object.create(.boolean, allocator, .{ .boolean = boolean });
-        },
-        .None => return Object.init(.none),
-        .Tuple => |tuple| {
-            var items = try allocator.alloc(Object, tuple.len);
-            for (tuple, 0..) |elem, i| {
-                items[i] = try loadConst(allocator, elem);
-            }
-            return Object.create(.tuple, allocator, items);
-        },
-        .CodeObject => |co| {
-            return Object.create(.codeobject, allocator, .{ .co = co });
-        },
-        .Set => |set_struct| {
-            const set = set_struct.set;
-
-            var items = std.AutoHashMapUnmanaged(Object, void){};
-            for (set) |elem| {
-                try items.put(allocator, try loadConst(allocator, elem), {});
-            }
-            return Object.create(.set, allocator, .{
-                .set = items,
-                .frozen = set_struct.frozen,
-            });
-        },
-        else => std.debug.panic("TODO: loadConst {s}", .{@tagName(inst)}),
-    }
 }
 
 /// Looks upwards in the scopes from the current depth and tries to find name.
@@ -642,8 +616,8 @@ pub fn createObject(
 
 fn setNewCo(
     vm: *Vm,
-    new_co: *CodeObject,
+    new_co: CodeObject,
 ) void {
     vm.crash_info = crash_report.prepVmContext(new_co);
-    vm.current_co = new_co;
+    vm.co = new_co;
 }

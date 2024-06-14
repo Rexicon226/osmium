@@ -1,0 +1,324 @@
+error(gpa): memory address 0x7f6cb920e000 leaked: 
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:189:51: 0x801bd04 in readString ()
+    const dst_string = try marshal.allocator.alloc(u8, size);
+                                                  ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:88:98: 0x800c1a7 in readObject ()
+        .TYPE_STRING => try Object.create(.string, allocator, .{ .string = try marshal.readString(.{}) }),
+                                                                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:165:31: 0x801b674 in readCodeObject ()
+    _ = try marshal.readObject();
+                              ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb921b000 leaked: 
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:189:51: 0x801bd04 in readString ()
+    const dst_string = try marshal.allocator.alloc(u8, size);
+                                                  ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:93:45: 0x800cd76 in readObject ()
+            .string = try marshal.readString(.{ .short = true }),
+                                            ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:108:50: 0x800c846 in readObject ()
+                object.* = try marshal.readObject();
+                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:144:50: 0x801b10e in readCodeObject ()
+        .names           = try marshal.readObject(),
+                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb9220030 leaked: 
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:106:48: 0x800c749 in readObject ()
+            const objects = try allocator.alloc(Object, size);
+                                               ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:144:50: 0x801b10e in readCodeObject ()
+        .names           = try marshal.readObject(),
+                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb9220050 leaked: 
+/home/david/Code/Zython/osmium/src/vm/Object.zig:80:37: 0x801cd97 in create__anon_6428 ()
+    const ptr = try allocator.create(t.PayloadType());
+                                    ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:110:48: 0x800c924 in readObject ()
+            const tuple_obj = try Object.create(.tuple, allocator, objects);
+                                               ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:146:59: 0x801b199 in readCodeObject ()
+            const varnames_tuple = (try marshal.readObject()).get(.tuple).*;
+                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb921e000 leaked: 
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:106:48: 0x800c749 in readObject ()
+            const objects = try allocator.alloc(Object, size);
+                                               ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:143:50: 0x801b083 in readCodeObject ()
+        .consts          = try marshal.readObject(),
+                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb921e020 leaked: 
+/usr/local/zig/zig13/lib/std/math/big/int.zig:2597:50: 0x800b363 in initCapacity ()
+                const limbs = try allocator.alloc(Limb, @max(default_capacity, capacity));
+                                                 ^
+/usr/local/zig/zig13/lib/std/math/big/int.zig:2561:28: 0x800b54c in init ()
+        return initCapacity(allocator, default_capacity);
+                           ^
+/usr/local/zig/zig13/lib/std/math/big/int.zig:2583:33: 0x800b5cf in initSet__anon_6419 ()
+        var s = try Managed.init(allocator);
+                                ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:97:54: 0x800c36b in readObject ()
+            const new_int = try BigIntManaged.initSet(allocator, marshal.readLong(true));
+                                                     ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:108:50: 0x800c846 in readObject ()
+                object.* = try marshal.readObject();
+                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:143:50: 0x801b083 in readCodeObject ()
+        .consts          = try marshal.readObject(),
+                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb921f000 leaked: 
+/home/david/Code/Zython/osmium/src/vm/Object.zig:80:37: 0x801c089 in create__anon_6417 ()
+    const ptr = try allocator.create(t.PayloadType());
+                                    ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:88:42: 0x800c262 in readObject ()
+        .TYPE_STRING => try Object.create(.string, allocator, .{ .string = try marshal.readString(.{}) }),
+                                         ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:142:52: 0x801af82 in readCodeObject ()
+        .code            =  (try marshal.readObject()).get(.string).string,
+                                                   ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb921f040 leaked: 
+/home/david/Code/Zython/osmium/src/vm/Object.zig:80:37: 0x801c959 in create__anon_6423 ()
+    const ptr = try allocator.create(t.PayloadType());
+                                    ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:98:41: 0x800c426 in readObject ()
+            break :int try Object.create(.int, allocator, .{ .int = new_int });
+                                        ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:108:50: 0x800c846 in readObject ()
+                object.* = try marshal.readObject();
+                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:143:50: 0x801b083 in readCodeObject ()
+        .consts          = try marshal.readObject(),
+                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb921f080 leaked: 
+/home/david/Code/Zython/osmium/src/vm/Object.zig:80:37: 0x801c089 in create__anon_6417 ()
+    const ptr = try allocator.create(t.PayloadType());
+                                    ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:92:29: 0x800ce31 in readObject ()
+        => try Object.create(.string, allocator, .{
+                            ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:108:50: 0x800c846 in readObject ()
+                object.* = try marshal.readObject();
+                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:144:50: 0x801b10e in readCodeObject ()
+        .names           = try marshal.readObject(),
+                                                 ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb921f0c0 leaked: 
+/home/david/Code/Zython/osmium/src/vm/Object.zig:80:37: 0x801c089 in create__anon_6417 ()
+    const ptr = try allocator.create(t.PayloadType());
+                                    ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:92:29: 0x800ce31 in readObject ()
+        => try Object.create(.string, allocator, .{
+                            ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:157:47: 0x801b401 in readCodeObject ()
+            break :blk (try marshal.readObject()).get(.string).string;
+                                              ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb921f100 leaked: 
+/home/david/Code/Zython/osmium/src/vm/Object.zig:80:37: 0x801c089 in create__anon_6417 ()
+    const ptr = try allocator.create(t.PayloadType());
+                                    ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:92:29: 0x800ce31 in readObject ()
+        => try Object.create(.string, allocator, .{
+                            ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:159:51: 0x801b4ff in readCodeObject ()
+        .name            = (try marshal.readObject()).get(.string).string,
+                                                  ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+
+error(gpa): memory address 0x7f6cb921f140 leaked: 
+/home/david/Code/Zython/osmium/src/vm/Object.zig:80:37: 0x801c089 in create__anon_6417 ()
+    const ptr = try allocator.create(t.PayloadType());
+                                    ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:88:42: 0x800c262 in readObject ()
+        .TYPE_STRING => try Object.create(.string, allocator, .{ .string = try marshal.readString(.{}) }),
+                                         ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:165:31: 0x801b674 in readCodeObject ()
+    _ = try marshal.readObject();
+                              ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:87:91: 0x800c01d in readObject ()
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+                                                                                          ^
+/home/david/Code/Zython/osmium/src/compiler/Marshal.zig:61:40: 0x8004b4a in parse ()
+    var result = try marshal.readObject();
+                                       ^
+/home/david/Code/Zython/osmium/src/main.zig:177:35: 0x80052d5 in run_file ()
+    var object = try marshal.parse();
+                                  ^
+/home/david/Code/Zython/osmium/src/main.zig:112:25: 0x8005e74 in main ()
+            try run_file(allocator, file_path);
+                        ^
+/usr/local/zig/zig13/lib/std/start.zig:524:37: 0x80065b9 in main ()
+            const result = root.main() catch |err| {
+                                    ^
+

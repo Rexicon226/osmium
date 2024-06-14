@@ -1,5 +1,12 @@
 //! Inputs python source and outputs Bytecode
 
+pub const Error = error{
+    FailedToCompileString,
+    FailedToWriteObjectToString,
+    FailedToAsStringCode,
+    BytesEmpty,
+};
+
 pub fn parse(source: [:0]const u8, allocator: std.mem.Allocator) ![]const u8 {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
