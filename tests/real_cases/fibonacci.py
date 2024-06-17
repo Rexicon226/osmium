@@ -1,14 +1,12 @@
-n = 10
-num1 = 0
-num2 = 1
-next_number = num2  
-count = 1
- 
-while count <= n:
-    print(next_number, end=" ")
-    count += 1
-    temp = num1
-    num1 = num2
-    num2 = next_number
-    next_number = num1 + num2
-print()
+def fibonacci_sequence(limit):
+    fib_seq = [0, 1]
+    i = 1
+    while i < limit:
+        next_value = fib_seq[-1] + fib_seq[-2]
+        fib_seq.append(next_value)
+        i += 1
+    return fib_seq
+
+limit = 100000
+fib_seq = fibonacci_sequence(limit)
+# print(fib_seq)

@@ -59,7 +59,9 @@ pub fn parse(marshal: *Marshal) !CodeObject {
     defer t.end();
 
     const obj = try marshal.readObject();
-    return obj.get(.codeobject).*;
+    const co_ptr = obj.get(.codeobject);
+    defer marshal.allocator.destroy(co_ptr);
+    return co_ptr.*;
 }
 
 fn readObject(marshal: *Marshal) Error!Object {
@@ -138,7 +140,7 @@ fn readCodeObject(marshal: *Marshal) Error!CodeObject {
         .code = code: {
             var code_obj = try marshal.readObject();
             const string = (try code_obj.getOwnedPayload(.string, allocator));
-            break :code try allocator.dupe(u8, string);
+            break :code string;
         },
         .consts = try marshal.readObject(),
         .names = try marshal.readObject(),
@@ -156,12 +158,12 @@ fn readCodeObject(marshal: *Marshal) Error!CodeObject {
 
             var filename_obj = try marshal.readObject();
             const string = (try filename_obj.getOwnedPayload(.string, allocator));
-            break :blk try allocator.dupe(u8, string);
+            break :blk string;
         },
         .name = name: {
             var name_obj = try marshal.readObject();
             const string = (try name_obj.getOwnedPayload(.string, allocator));
-            break :name try allocator.dupe(u8, string);
+            break :name string;
         },
         .firstlineno = marshal.readLong(false),
     };

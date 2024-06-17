@@ -61,7 +61,7 @@ pub fn main() !u8 {
     }
 
     if (tracer_backend != .None) {
-        const dir = try std.fs.cwd().makeOpenPath("traces/");
+        const dir = try std.fs.cwd().makeOpenPath("traces/", .{});
 
         try tracer.init();
         try tracer.init_thread(dir);
@@ -178,23 +178,23 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
     gc.enable();
     gc.setFindLeak(build_options.debug_log == .debug);
     const gc_allocator = gc.allocator();
+    defer gc.collect();
 
     // by its nature this process is very difficult to not leak in and takes more perf
     // to cleanup than to just pool.
 
-    const temp_arena = std.heap.ArenaAllocator.init(allocator);
     const pyc = try Python.parse(source, file_name, gc_allocator);
-    var marshal = try Marshal.init(gc_allocator, pyc);
-    const object = try marshal.parse();
-    const owned_object = try object.clone(gc_allocator);
-    temp_arena.deinit();
+    defer gc_allocator.free(pyc);
 
-    var vm = try Vm.init(gc_allocator, file_name, owned_object);
+    var marshal = try Marshal.init(gc_allocator, pyc);
+    defer marshal.deinit();
+
+    const object = try marshal.parse();
+
+    var vm = try Vm.init(gc_allocator, file_name, object);
     try vm.initBuiltinMods(std.fs.path.dirname(file_name) orelse
         @panic("passed in dir instead of file"));
 
     try vm.run();
     defer vm.deinit();
-
-    gc.collect();
 }

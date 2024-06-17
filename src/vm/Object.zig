@@ -127,11 +127,9 @@ pub fn create(comptime t: Tag, allocator: Allocator, data: Data(t)) error{OutOfM
 
     switch (t) {
         .string, .tuple => {
-            const ptr = try t.allocate(allocator, data.len);
-            @memcpy(ptr, data);
             var payload_ptr: []void = undefined;
             payload_ptr.len = data.len;
-            payload_ptr.ptr = @ptrCast(ptr.ptr);
+            payload_ptr.ptr = @ptrCast(data.ptr);
             return .{ .tag = t, .payload = .{ .double = payload_ptr } };
         },
         else => {
@@ -150,7 +148,9 @@ pub fn init(comptime t: Tag) Object {
 const CloneError = error{OutOfMemory};
 
 pub fn clone(object: *const Object, allocator: Allocator) CloneError!Object {
-    assert(@intFromEnum(object.tag) >= Tag.first_payload);
+    if (@intFromEnum(object.tag) < Tag.first_payload) {
+        return object.*; // nothing deeper to clone
+    }
 
     const ptr: PayloadTy = switch (object.tag) {
         .none => unreachable,
@@ -161,7 +161,14 @@ pub fn clone(object: *const Object, allocator: Allocator) CloneError!Object {
             const old_mem = object.get(t);
             const new_ptr = try t.allocate(allocator, old_mem.len);
 
-            @memcpy(new_ptr, old_mem);
+            if (t == .tuple) {
+                for (new_ptr, old_mem) |*dst, src| {
+                    dst.* = try src.clone(allocator);
+                }
+            } else {
+                @memcpy(new_ptr, old_mem);
+            }
+
             var payload_ptr: []void = undefined;
             payload_ptr.len = old_mem.len;
             payload_ptr.ptr = @ptrCast(new_ptr.ptr);
@@ -195,14 +202,6 @@ pub fn deinit(object: *Object, allocator: Allocator) void {
     const t = object.tag;
     if (@intFromEnum(t) < Tag.first_payload) return; // nothing to free
 
-    const size: usize = switch (t) {
-        .none => unreachable,
-        .float => unreachable,
-        .bool_true => unreachable,
-        .bool_false => unreachable,
-        inline else => |tag| @sizeOf(Data(tag)),
-    };
-
     // if it has a .deinit decl, we call that
     switch (t) {
         .none => unreachable,
@@ -226,7 +225,9 @@ pub fn deinit(object: *Object, allocator: Allocator) void {
                 .Struct, .Enum, .Union => {
                     const payload = object.get(tag);
                     const arg_count = @typeInfo(@TypeOf(data_ty.deinit)).Fn.params.len;
-                    if (comptime arg_count == 1) payload.deinit() else payload.deinit(allocator);
+                    if (comptime arg_count == 1) {
+                        payload.deinit();
+                    } else payload.deinit(allocator);
                 },
                 else => {},
             }
@@ -235,7 +236,7 @@ pub fn deinit(object: *Object, allocator: Allocator) void {
             allocator.free(@as(
                 [*]align(@alignOf(data_ty)) const u8,
                 @alignCast(@ptrCast(object.payload.single)),
-            )[0..size]);
+            )[0..@sizeOf(data_ty)]);
         },
     }
 
@@ -256,19 +257,23 @@ pub fn get(object: *const Object, comptime t: Tag) PtrData(t) {
 }
 
 /// Copies the payload to new memory, frees the object.
-pub fn getOwnedPayload(object: *Object, comptime t: Tag, allocator: Allocator) !PtrData(t) {
+pub fn getOwnedPayload(object: *Object, comptime t: Tag, allocator: Allocator) !Data(t) {
     defer object.deinit(allocator);
     switch (t) {
         .string, .tuple => {
             const old_mem = object.get(t);
             const new_ptr = try t.allocate(allocator, old_mem.len);
-            @memcpy(new_ptr, old_mem);
+            if (t == .tuple) {
+                for (new_ptr, old_mem) |*dst, src| {
+                    dst.* = src.clone(allocator);
+                }
+            } else {
+                @memcpy(new_ptr, old_mem);
+            }
             return new_ptr;
         },
         else => {
-            const new_ptr = try t.allocate(allocator, null);
-            new_ptr.* = object.get(t).*;
-            return new_ptr;
+            return object.get(t).*;
         },
     }
 }
@@ -324,7 +329,9 @@ pub const Payload = union(enum) {
     pub const Tuple = []Object;
 
     pub const List = struct {
-        list: std.ArrayListUnmanaged(Object),
+        list: HashMap,
+
+        pub const HashMap = std.ArrayListUnmanaged(Object);
 
         pub const MemberFns: MemberFuncTy = &.{
             .{ .name = "append", .func = append },

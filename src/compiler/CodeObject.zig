@@ -134,27 +134,27 @@ pub fn process(
     co: *CodeObject,
     allocator: std.mem.Allocator,
 ) !void {
-    var instructions = std.ArrayList(Instruction).init(allocator);
-
     const bytes = co.code;
+    const num_instructions = bytes.len / 2;
+    var instructions = try allocator.alloc(Instruction, num_instructions);
 
-    var cursor: u32 = 0;
-    while (cursor < bytes.len) {
-        const byte = bytes[cursor];
+    var i: usize = 0;
+    for (0..num_instructions) |cursor| {
+        const window = bytes[cursor * 2 ..][0..2];
+        const byte = window[0];
         const op: OpCode = @enumFromInt(byte);
 
         const has_arg = byte >= 90;
 
         const inst: Instruction = .{
             .op = op,
-            .extra = if (has_arg) bytes[cursor + 1] else undefined,
+            .extra = if (has_arg) window[1] else undefined,
         };
-        try instructions.append(inst);
-        cursor += 2;
-        continue;
+        instructions[i] = inst;
+        i += 1;
     }
 
-    co.instructions = try instructions.toOwnedSlice();
+    co.instructions = instructions;
     co.index = 0;
 }
 

@@ -51,6 +51,7 @@ crash_info: crash_report.VmContext,
 
 builtin_mods: std.StringHashMapUnmanaged(Object.Payload.Module) = .{},
 
+/// Takes ownership of `co`.
 pub fn init(allocator: Allocator, name: [:0]const u8, co: CodeObject) !Vm {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
@@ -133,11 +134,12 @@ pub fn run(
 }
 
 pub fn deinit(vm: *Vm) void {
-    for (vm.scopes.items) |scope| {
+    for (vm.scopes.items) |*scope| {
         var val_iter = scope.valueIterator();
         while (val_iter.next()) |val| {
             val.deinit(vm.allocator);
         }
+        scope.deinit(vm.allocator);
     }
     vm.scopes.deinit(vm.allocator);
 
@@ -156,6 +158,8 @@ pub fn deinit(vm: *Vm) void {
         mod.deinit(vm.allocator);
     }
     vm.builtin_mods.deinit(vm.allocator);
+
+    vm.co.deinit(vm.allocator);
     vm.* = undefined;
 }
 
@@ -185,6 +189,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 
         .ROT_TWO => try vm.execRotTwo(),
 
+        .NOP => {},
+
         .POP_TOP => try vm.execPopTop(),
         .POP_JUMP_IF_TRUE => try vm.execPopJump(inst, true),
         .POP_JUMP_IF_FALSE => try vm.execPopJump(inst, false),
@@ -192,6 +198,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .INPLACE_ADD, .BINARY_ADD => try vm.execBinaryOperation(.add),
         .INPLACE_SUBTRACT, .BINARY_SUBTRACT => try vm.execBinaryOperation(.sub),
         .INPLACE_MULTIPLY, .BINARY_MULTIPLY => try vm.execBinaryOperation(.mul),
+        .BINARY_SUBSCR => try vm.execBinarySubscr(),
 
         .COMPARE_OP => try vm.execCompareOperation(inst),
 
@@ -205,6 +212,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 
         .IMPORT_NAME => try vm.execImportName(inst),
         .IMPORT_FROM => try vm.execImportFrom(inst),
+
+        .JUMP_ABSOLUTE => vm.co.index = inst.extra,
 
         else => std.debug.panic("TODO: {s}", .{@tagName(inst.op)}),
     }
@@ -269,6 +278,7 @@ fn execStoreName(vm: *Vm, inst: Instruction) !void {
 
 fn execReturnValue(vm: *Vm) !void {
     if (vm.depth == 0) {
+        _ = vm.stack.pop();
         vm.is_running = false;
         return;
     }
@@ -280,11 +290,13 @@ fn execReturnValue(vm: *Vm) !void {
 
 fn execBuildList(vm: *Vm, inst: Instruction) !void {
     const count = inst.extra;
+    const objects = try vm.popNObjects(count);
+    var list: Object.Payload.List.HashMap = .{};
 
-    if (count == 0) return;
-    _ = vm;
+    try list.appendSlice(vm.allocator, objects);
 
-    @panic("TODO: execBuildList count != 0");
+    const val = try vm.createObject(.list, .{ .list = list });
+    try vm.stack.append(vm.allocator, val);
 }
 
 fn execBuildTuple(vm: *Vm, inst: Instruction) !void {
@@ -296,18 +308,19 @@ fn execBuildTuple(vm: *Vm, inst: Instruction) !void {
 
 fn execBuildSet(vm: *Vm, inst: Instruction) !void {
     const objects = try vm.popNObjects(inst.extra);
-    var list: Object.Payload.Set.HashMap = .{};
+    var set: Object.Payload.Set.HashMap = .{};
 
     for (objects) |object| {
-        try list.put(vm.allocator, object, {});
+        try set.put(vm.allocator, object, {});
     }
 
-    const val = try vm.createObject(.set, .{ .set = list, .frozen = false });
+    const val = try vm.createObject(.set, .{ .set = set, .frozen = false });
     try vm.stack.append(vm.allocator, val);
 }
 
 fn execCallFunction(vm: *Vm, inst: Instruction) !void {
     const args = try vm.popNObjects(inst.extra);
+    defer vm.allocator.free(args);
 
     const func_object = vm.stack.pop();
     switch (func_object.tag) {
@@ -400,6 +413,31 @@ fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
 
     const result_val = try vm.createObject(.int, result);
     try vm.stack.append(vm.allocator, result_val);
+}
+
+fn execBinarySubscr(vm: *Vm) !void {
+    const tos = vm.stack.pop();
+    const list_obj = vm.stack.pop();
+
+    assert(tos.tag == .int);
+    const index_obj = tos.get(.int);
+    // can go usize both ways
+    const index = try index_obj.to(i128);
+
+    switch (list_obj.tag) {
+        .list => {
+            const list_val = list_obj.get(.list);
+
+            const val: Object = if (index < 0) val: {
+                const length = list_val.list.items.len;
+                const true_index: usize = @intCast(length - @abs(index));
+                break :val list_val.list.items[true_index];
+            } else list_val.list.items[@intCast(index)];
+
+            try vm.stack.append(vm.allocator, val);
+        },
+        else => std.debug.panic("TODO: execBinarySubscr {s}", .{@tagName(list_obj.tag)}),
+    }
 }
 
 fn execCompareOperation(vm: *Vm, inst: Instruction) !void {
