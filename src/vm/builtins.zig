@@ -12,6 +12,8 @@ const Vm = @import("Vm.zig");
 const fatal = @import("panic.zig").fatal;
 const assert = std.debug.assert;
 
+const log = std.log.scoped(.builtins);
+
 pub const KW_Type = std.StringHashMap(Object);
 
 pub const BuiltinError =
@@ -26,7 +28,7 @@ pub const func_proto = fn (*Vm, []const Object, kw: ?KW_Type) BuiltinError!void;
 pub const builtin_fns = &.{
     // // zig fmt: off
     .{ "abs", abs },
-    .{ "bool", boolBuiltin },
+    .{ "bool", @"bool" },
     .{ "print", print },
     .{ "getattr", getattr },
     .{ "__import__", __import__ },
@@ -74,7 +76,20 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     for (args, 0..) |arg, i| {
         printSafe(stdout, "{}", .{arg});
 
-        if (i < args.len - 1) printSafe(stdout, " ", .{});
+        const seperator: []const u8 = sep: {
+            if (maybe_kw) |kw| {
+                const maybe_sep_override = kw.get("sep");
+
+                if (maybe_sep_override) |sep| {
+                    if (sep.tag != .string) fatal("print(sep=) must be a string type", .{});
+                    const payload = sep.get(.string);
+                    break :sep payload;
+                }
+            }
+            break :sep " ";
+        };
+
+        if (i < args.len - 1) printSafe(stdout, "{s}", .{seperator});
     }
 
     // If there's an "end" kw, it overrides this last print.
@@ -124,7 +139,7 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
 }
 
 /// https://docs.python.org/3.10/library/stdtypes.html#truth
-fn boolBuiltin(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
+fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-bool", .{});
     defer t.end();
 
@@ -139,7 +154,6 @@ fn boolBuiltin(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
         .none => false,
         .bool_true => true,
         .bool_false => false,
-
         .int => int: {
             const int = arg.get(.int);
             var zero = try std.math.big.int.Managed.initSet(vm.allocator, 0);
@@ -148,13 +162,11 @@ fn boolBuiltin(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
             if (int.eql(zero)) break :int false;
             break :int true;
         },
-
         .string => string: {
             const string = arg.get(.string);
             if (string.len == 0) break :string false;
             break :string true;
         },
-
         else => fatal("bool() cannot take in type: {s}", .{@tagName(arg.tag)}),
     };
 
@@ -190,11 +202,12 @@ fn __import__(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
 
         // just search for relative single file modules,
         // such as sys_path + mod_name + .py
-        const potential_name = try std.mem.concat(
-            vm.allocator,
-            u8,
-            &.{ sys_path_one, &.{std.fs.path.sep}, mod_name, ".py" },
-        );
+        const potential_name = try std.mem.concatWithSentinel(vm.allocator, u8, &.{
+            sys_path_one,
+            &.{std.fs.path.sep},
+            mod_name,
+            ".py",
+        }, 0);
 
         // parse the file
         const source_file = std.fs.cwd().openFile(potential_name, .{ .lock = .exclusive }) catch |err| {
@@ -213,12 +226,12 @@ fn __import__(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
             0,
         );
 
-        const pyc = try Python.parse(source, vm.allocator);
+        const pyc = try Python.parse(source, potential_name, vm.allocator);
         var marshal = try Marshal.init(vm.allocator, pyc);
         const object = try marshal.parse();
 
-        // create a new vm to evaluate  the global scope of the module
-        var mod_vm = try Vm.init(vm.allocator, object);
+        // create a new vm to evaluate the global scope of the module
+        var mod_vm = try Vm.init(vm.allocator, potential_name, object);
         mod_vm.initBuiltinMods(std.fs.path.dirname(potential_name) orelse
             @panic("passed in dir instead of file")) catch |err| {
             std.debug.panic(
@@ -235,10 +248,21 @@ fn __import__(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
         defer mod_vm.deinit();
         assert(mod_vm.is_running == false);
 
-        // convert all globals in the evaluated module to attrs
+        const mod_scope = mod_vm.scopes.items[0];
+        var global_scope = try mod_scope.clone(vm.allocator);
+
+        var iter = mod_scope.iterator();
+        while (iter.next()) |entry| {
+            try global_scope.put(
+                vm.allocator,
+                try vm.allocator.dupe(u8, entry.key_ptr.*),
+                try entry.value_ptr.clone(vm.allocator),
+            );
+        }
+
         break :file .{
             .name = mod_name,
-            .dict = try mod_vm.scopes.items[0].clone(vm.allocator),
+            .dict = global_scope,
         };
     };
 

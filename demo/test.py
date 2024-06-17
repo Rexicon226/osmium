@@ -1,1 +1,3 @@
-print(10)
+import dep
+
+print(dep.a)

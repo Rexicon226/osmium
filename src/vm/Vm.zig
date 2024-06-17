@@ -38,6 +38,12 @@ depth: u32 = 0,
 /// VM State
 is_running: bool,
 
+/// Name of the python file being executed.
+///
+/// TODO: this should be taken from the current codeobject,
+/// however that doesn't seem to be working right now.
+name: [:0]const u8,
+
 stack: std.ArrayListUnmanaged(Object),
 scopes: std.ArrayListUnmanaged(std.StringHashMapUnmanaged(Object)) = .{},
 
@@ -45,7 +51,7 @@ crash_info: crash_report.VmContext,
 
 builtin_mods: std.StringHashMapUnmanaged(Object.Payload.Module) = .{},
 
-pub fn init(allocator: Allocator, co: CodeObject) !Vm {
+pub fn init(allocator: Allocator, name: [:0]const u8, co: CodeObject) !Vm {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
@@ -53,6 +59,7 @@ pub fn init(allocator: Allocator, co: CodeObject) !Vm {
         .allocator = allocator,
         .is_running = false,
         .co = co,
+        .name = name,
         .crash_info = crash_report.prepVmContext(co),
         .stack = try std.ArrayListUnmanaged(Object).initCapacity(allocator, co.stacksize),
     };
@@ -78,7 +85,6 @@ pub fn initBuiltinMods(vm: *Vm, root_dir_path: []const u8) !void {
     }
 }
 
-/// Creates an Arena around `alloc` and runs the main object.
 pub fn run(
     vm: *Vm,
 ) !void {
@@ -110,8 +116,9 @@ pub fn run(
         const instructions = vm.co.instructions.?;
         const instruction = instructions[vm.co.index];
         log.debug(
-            "Executing Instruction: {s} (stack_size={}, pc={}/{}, depth={}, heap={})",
+            "{s} Executing Instruction: {s} (stack_size={}, pc={}/{}, depth={}, heap={})",
             .{
+                vm.name,
                 @tagName(instruction.op),
                 vm.stack.items.len,
                 vm.co.index,

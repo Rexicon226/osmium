@@ -24,7 +24,7 @@ const log = std.log.scoped(.main);
 const version = "0.1.0";
 
 const ArgFlags = struct {
-    file_path: ?[]const u8 = null,
+    file_path: ?[:0]const u8 = null,
     is_pyc: bool = false,
     debug_print: bool = false,
 };
@@ -45,7 +45,11 @@ pub fn main() !u8 {
     crash_report.initialize();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 16 }){};
-    const allocator = gpa.allocator();
+    const allocator = blk: {
+        if (builtin.mode == .Debug) break :blk gpa.allocator();
+        if (builtin.link_libc) break :blk std.heap.c_allocator;
+        @panic("osmium doesn't support non-libc compilations yet");
+    };
 
     defer {
         _ = gpa.deinit();
@@ -148,7 +152,7 @@ fn isEqual(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
 
-pub fn run_file(allocator: std.mem.Allocator, file_name: []const u8) !void {
+pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
@@ -179,13 +183,13 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: []const u8) !void {
     // to cleanup than to just pool.
 
     const temp_arena = std.heap.ArenaAllocator.init(allocator);
-    const pyc = try Python.parse(source, gc_allocator);
+    const pyc = try Python.parse(source, file_name, gc_allocator);
     var marshal = try Marshal.init(gc_allocator, pyc);
     const object = try marshal.parse();
     const owned_object = try object.clone(gc_allocator);
     temp_arena.deinit();
 
-    var vm = try Vm.init(gc_allocator, owned_object);
+    var vm = try Vm.init(gc_allocator, file_name, owned_object);
     try vm.initBuiltinMods(std.fs.path.dirname(file_name) orelse
         @panic("passed in dir instead of file"));
 

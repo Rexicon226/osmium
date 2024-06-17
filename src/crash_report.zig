@@ -1,5 +1,6 @@
 //! Overrides the panics to provide more information
 //! Slightly stolen from the Zig Compiler :P
+
 const std = @import("std");
 const CodeObject = @import("compiler/CodeObject.zig");
 const print_co = @import("print_co.zig");

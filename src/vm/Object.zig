@@ -75,7 +75,7 @@ pub const Tag = enum(usize) {
     pub fn allocate(
         comptime t: Tag,
         allocator: Allocator,
-        len: ?if (isSlice(PtrData(t))) usize else void,
+        len: ?if (isInlinePtr(PtrData(t))) usize else void,
     ) !PtrData(t) {
         return switch (t) {
             .tuple => try allocator.alloc(Object, len.?),
@@ -112,13 +112,14 @@ pub fn Data(comptime t: Tag) type {
 
 pub fn PtrData(comptime t: Tag) type {
     const payload_ty = t.PayloadType();
-    if (isSlice(payload_ty)) return payload_ty;
+    if (isInlinePtr(payload_ty)) return payload_ty;
     return *payload_ty;
 }
 
-fn isSlice(ty: type) bool {
+fn isInlinePtr(ty: type) bool {
     const info = @typeInfo(ty);
-    return info == .Pointer and info.Pointer.size == .Slice;
+    if (info == .Pointer and info.Pointer.size == .Slice) return true;
+    return false;
 }
 
 pub fn create(comptime t: Tag, allocator: Allocator, data: Data(t)) error{OutOfMemory}!Object {
@@ -160,14 +161,21 @@ pub fn clone(object: *const Object, allocator: Allocator) !Object {
 
             @memcpy(new_ptr, old_mem);
             var payload_ptr: []void = undefined;
-
             payload_ptr.len = old_mem.len;
             payload_ptr.ptr = @ptrCast(new_ptr.ptr);
             break :blk .{ .double = payload_ptr };
         },
+        inline .int => |t| blk: {
+            const old_int = object.get(.int).*;
+            const new_ptr = try t.allocate(allocator, null);
+            const new_int = try old_int.clone();
+            new_ptr.* = new_int;
+            break :blk .{ .single = @ptrCast(new_ptr) };
+        },
         inline else => |tag| blk: {
             const new_ptr = try allocator.create(Data(tag));
-            new_ptr.* = object.get(tag).*;
+            const old_ptr = object.get(tag);
+            new_ptr.* = old_ptr.*;
             break :blk .{ .single = @ptrCast(new_ptr) };
         },
     };
@@ -229,7 +237,7 @@ pub fn get(object: *const Object, comptime t: Tag) PtrData(t) {
     assert(@intFromEnum(t) >= Tag.first_payload);
     assert(object.tag == t);
     const ptr_ty = PtrData(t);
-    if (comptime isSlice(ptr_ty)) {
+    if (comptime isInlinePtr(ptr_ty)) {
         const child_ty = @typeInfo(ptr_ty).Pointer.child;
         const many: [*]child_ty = @alignCast(@ptrCast(object.payload.double.ptr));
         return many[0..object.payload.double.len];
@@ -427,7 +435,7 @@ pub fn format(
         .none => try writer.writeAll("None"),
         .int => {
             const int = object.get(.int);
-            try writer.print("{}", .{int});
+            try writer.print("{}", .{int.*});
         },
         .string => {
             const string = object.get(.string);
@@ -482,6 +490,10 @@ pub fn format(
             const module = object.get(.module);
 
             try writer.print("<module '{s}'>", .{module.name});
+        },
+        .zig_function => {
+            const function = object.get(.zig_function);
+            try writer.print("<zig_function @ 0x{d}>", .{@intFromPtr(function)});
         },
 
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
