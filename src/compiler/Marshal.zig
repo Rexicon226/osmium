@@ -6,367 +6,209 @@ const CodeObject = @import("CodeObject.zig");
 const Object = @import("../vm/Object.zig");
 const Vm = @import("../vm/Vm.zig");
 const tracer = @import("tracer");
+const BigIntManaged = std.math.big.int.Managed;
 
 const Marshal = @This();
-
 const readInt = std.mem.readInt;
+
+const Error = error{} || std.mem.Allocator.Error;
 
 const PyLong_SHIFT = 15;
 
-pub const FlagRef = struct {
-    byte: u32,
-    ty: ObjType,
-    content: Result,
-    usages: u32 = 0,
+const PythonVersion = struct { major: u8, minor: u8 };
+const Reference = struct { byte: usize, index: usize };
+const FlagRef = struct {
+    byte: usize,
+    usages: usize = 0,
+    content: Object,
 };
 
-pub const Reference = struct {
-    byte: u32,
-    index: u32,
-};
+py_version: PythonVersion,
 
-// Fields
-python_version: struct { major: u8, minor: u8 },
-flag_refs: std.ArrayList(?FlagRef),
+references: std.ArrayListUnmanaged(Reference) = .{},
+flag_refs: std.ArrayListUnmanaged(?FlagRef) = .{},
 
-// Deduplication. Basically an internpool.
-references: std.ArrayList(?Reference),
-
-// Other
-cursor: u32,
+cursor: usize,
 bytes: []const u8,
 allocator: std.mem.Allocator,
 
-pub fn load(
-    allocator: std.mem.Allocator,
-    input_bytes: []const u8,
-) !*CodeObject {
+pub fn init(allocator: std.mem.Allocator, input_bytes: []const u8) !Marshal {
+    const version = Marshal.getVersion(input_bytes[0..4].*);
+    const head_size = switch (version.minor) {
+        10 => 16,
+        else => unreachable, // not supported
+    };
+
+    return .{
+        .bytes = try allocator.dupe(u8, input_bytes),
+        .cursor = head_size,
+        .allocator = allocator,
+        .py_version = version,
+    };
+}
+
+pub fn deinit(marshal: *Marshal) void {
+    marshal.flag_refs.deinit(marshal.allocator);
+    marshal.references.deinit(marshal.allocator);
+    marshal.allocator.free(marshal.bytes);
+    marshal.* = undefined;
+}
+
+pub fn parse(marshal: *Marshal) !CodeObject {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
-    var marshal = try allocator.create(Marshal);
-    errdefer allocator.destroy(marshal);
-
-    if (input_bytes.len < 4) return error.BytesEmpty;
-
-    marshal.bytes = input_bytes;
-    marshal.cursor = 0;
-    marshal.flag_refs = std.ArrayList(?FlagRef).init(allocator);
-    marshal.references = std.ArrayList(?Reference).init(allocator);
-    marshal.allocator = allocator;
-
-    marshal.set_version(marshal.bytes[0..4].*);
-
-    // Skip header. Add more options later.
-    // >= 3.7 is 16 bytes
-    // >= 3.3 is 12 bytes
-    // less is 8 bytes
-
-    marshal.cursor += 16;
-
-    const co = marshal.read_object();
-    return co.CodeObject;
+    const obj = try marshal.readObject();
+    return obj.get(.codeobject).*;
 }
 
-fn read_object(marshal: *Marshal) Result {
-    var byte = marshal.next();
+fn readObject(marshal: *Marshal) Error!Object {
+    const t = tracer.trace(@src(), "", .{});
+    defer t.end();
+
+    const allocator = marshal.allocator;
+    var next_byte = marshal.bytes[marshal.cursor];
+    marshal.cursor += 1;
 
     var ref_id: ?usize = null;
-    if (testBit(byte, 7)) {
-        byte = clearBit(byte, 7);
-
+    if (testBit(next_byte, 7)) {
+        next_byte = clearBit(next_byte, 7);
         ref_id = marshal.flag_refs.items.len;
-        marshal.flag_refs.append(null) catch {
-            @panic("failed to append flag ref");
-        };
+        try marshal.flag_refs.append(allocator, null);
     }
 
-    const ty: ObjType = @enumFromInt(byte);
-    var result: Result = undefined;
+    const ty: ObjType = @enumFromInt(next_byte);
+    const object: Object = switch (ty) {
+        .TYPE_NONE => Object.init(.none),
 
-    switch (ty) {
-        .TYPE_LONG => result = marshal.read_py_long(),
-
-        .TYPE_STRING,
-        .TYPE_UNICODE,
-        .TYPE_ASCII,
-        .TYPE_ASCII_INTERNED,
-        => result = marshal.read_string(.{}),
-
-        .TYPE_SMALL_TUPLE => {
-            const size = marshal.read_bytes(1);
-            var results = std.ArrayList(Result).init(marshal.allocator);
-            for (0..size[0]) |_| {
-                results.append(marshal.read_object()) catch {
-                    @panic("failed to append to tuple");
-                };
-            }
-            result = .{
-                .Tuple = results.toOwnedSlice() catch @panic("OOM"),
-            };
-        },
-
-        .TYPE_FROZENSET => {
-            const size = marshal.read_long();
-            var results = std.ArrayList(Result).init(marshal.allocator);
-            for (0..@intCast(size.Int)) |_| {
-                results.append(marshal.read_object()) catch {
-                    @panic("failed to append to frozenset");
-                };
-            }
-            result = .{
-                .Set = .{
-                    .set = results.toOwnedSlice() catch @panic("OOM"),
-                    .frozen = true,
-                },
-            };
-        },
-
-        .TYPE_INT => result = marshal.read_long(),
-        .TYPE_NONE => result = .{ .None = {} },
+        .TYPE_CODE => try Object.create(.codeobject, allocator, try marshal.readCodeObject()),
+        .TYPE_STRING => try Object.create(.string, allocator, try marshal.readString(.{})),
 
         .TYPE_SHORT_ASCII_INTERNED,
         .TYPE_SHORT_ASCII,
-        => result = marshal.read_string(.{ .short = true }),
+        => try Object.create(.string, allocator, try marshal.readString(.{ .short = true })),
 
-        .TYPE_REF => {
-            const index: u32 = @intCast(marshal.read_long().Int);
-            marshal.references.append(
-                .{ .byte = marshal.cursor, .index = index },
-            ) catch {
-                @panic("failed to append to references");
-            };
+        .TYPE_INT => int: {
+            const new_int = try BigIntManaged.initSet(allocator, marshal.readLong(true));
+            break :int try Object.create(.int, allocator, new_int);
+        },
+
+        .TYPE_TRUE => Object.init(.bool_true),
+        .TYPE_FALSE => Object.init(.bool_false),
+
+        .TYPE_SMALL_TUPLE => tuple: {
+            const size = marshal.readBytes(1)[0];
+            const objects = try allocator.alloc(Object, size);
+            for (objects) |*object| {
+                object.* = try marshal.readObject();
+            }
+            const tuple_obj = try Object.create(.tuple, allocator, objects);
+            break :tuple tuple_obj;
+        },
+
+        .TYPE_REF => ref: {
+            const index = marshal.readLong(false);
+            try marshal.references.append(allocator, .{ .byte = marshal.cursor, .index = index });
             marshal.flag_refs.items[index].?.usages += 1;
-            result = marshal.flag_refs.items[index].?.content;
+            break :ref marshal.flag_refs.items[index].?.content;
         },
-
-        // This causes marshal to free some memory,
-        // so we just return to prevent it from access flag_refs again.
-        .TYPE_CODE => result = marshal.read_codeobject(),
-
-        .TYPE_TRUE => result = .{ .Bool = true },
-        .TYPE_FALSE => result = .{ .Bool = false },
-
-        .TYPE_BINARY_FLOAT => {
-            const float_bytes = marshal.read_bytes(8);
-            const float: f64 = @bitCast(float_bytes[0..8].*);
-
-            result = .{ .Float = float };
-        },
-
-        else => std.debug.panic(
-            "Unsupported ObjType: {s}\n",
-            .{@tagName(ty)},
-        ),
-    }
+        else => std.debug.panic("TODO: marshal.readObject {s}", .{@tagName(ty)}),
+    };
 
     if (ref_id) |id| {
         marshal.flag_refs.items[id] = .{
             .byte = marshal.cursor,
-            .ty = ty,
-            .content = result,
+            .content = object,
         };
     }
+
+    return object;
+}
+
+fn readCodeObject(marshal: *Marshal) Error!CodeObject {
+    const allocator = marshal.allocator;
+
+    const result: CodeObject = .{
+        .argcount = marshal.readLong(false),
+        .posonlyargcount = marshal.readLong(false),
+        .kwonlyargcount = marshal.readLong(false),
+        .nlocals = marshal.readLong(false),
+        .stacksize = marshal.readLong(false),
+        .flags = marshal.readLong(false),
+        .code = code: {
+            var code_obj = try marshal.readObject();
+            const string = (try code_obj.getOwnedPayload(.string, allocator));
+            break :code try allocator.dupe(u8, string);
+        },
+        .consts = try marshal.readObject(),
+        .names = try marshal.readObject(),
+        .varnames = varnames: {
+            const varnames_tuple = (try marshal.readObject()).get(.tuple);
+            const varnames = try allocator.dupe(Object, varnames_tuple);
+            break :varnames varnames;
+        },
+        .filename = blk: {
+            // skip freevars and cellvars
+            var freevars = try marshal.readObject();
+            freevars.deinit(allocator);
+            var cellvars = try marshal.readObject();
+            cellvars.deinit(allocator);
+
+            var filename_obj = try marshal.readObject();
+            const string = (try filename_obj.getOwnedPayload(.string, allocator));
+            break :blk try allocator.dupe(u8, string);
+        },
+        .name = name: {
+            var name_obj = try marshal.readObject();
+            const string = (try name_obj.getOwnedPayload(.string, allocator));
+            break :name try allocator.dupe(u8, string);
+        },
+        .firstlineno = marshal.readLong(false),
+    };
+
+    // lnotab
+    var lnotab = try marshal.readObject();
+    lnotab.deinit(allocator);
 
     return result;
 }
 
-fn read_codeobject(marshal: *Marshal) Result {
-    // All of this compilcated stuff is to keep the reading in the right order.
-
-    const structure = [_]struct { []const u8, *const fn (*Marshal) Result }{
-        .{ "argcount", read_long },
-        .{ "posonlyargcount", read_long },
-        .{ "kwonlyargcount", read_long },
-        .{ "nlocals", read_long },
-        .{ "stacksize", read_long },
-        .{ "flags", read_long },
-        .{ "code", read_object },
-        .{ "consts", read_object },
-        .{ "names", read_object },
-        .{ "varnames", read_object },
-        .{ "freevars", read_object },
-        .{ "cellvars", read_object },
-        .{ "filename", read_object },
-        .{ "name", read_object },
-        .{ "firstlineno", read_long },
-        .{ "lnotab", read_object },
-    };
-
-    var dict = std.StringArrayHashMap(Result).init(marshal.allocator);
-    defer dict.deinit();
-
-    for (structure) |struc| {
-        const name, const method = struc;
-        dict.put(name, method(marshal)) catch @panic(
-            "failed to put onto co dict",
-        );
-    }
-
-    const co = marshal.allocator.create(CodeObject) catch @panic(
-        "failed to allocate codeobject",
-    );
-    errdefer marshal.allocator.free(co);
-
-    // Here we just select the specific things we want.
-
-    co.argcount = @intCast(dict.get("argcount").?.Int);
-    co.name = dict.get("name").?.String;
-
-    const filename = dict.get("filename").?;
-    co.filename = filename.String;
-
-    const varname_tuple = dict.get("varnames").?.Tuple;
-    const varnames = marshal.allocator.alloc(Object, varname_tuple.len) catch @panic("OOM");
-    for (varname_tuple, 0..) |elem, i| {
-        // we use the VM as a single point of truth
-        varnames[i] = Vm.loadConst(marshal.allocator, elem) catch @panic("OOM");
-    }
-    co.varnames = varnames;
-
-    co.consts = dict.get("consts").?.Tuple;
-    co.stack_size = @intCast(dict.get("stacksize").?.Int);
-    co.code = dict.get("code").?.String;
-    co.names = dict.get("names").?.Tuple;
-
-    return .{ .CodeObject = co };
+fn readLong(
+    marshal: *Marshal,
+    comptime signed: bool,
+) if (signed) i32 else u32 {
+    const bytes = marshal.readBytes(4);
+    return @bitCast(bytes[0..4].*);
 }
 
-pub const Result = union(enum) {
-    Int: i32,
-    /// Floats are stored in 8 bytes.
-    Float: f64,
+/// allocates memory to hold the string as the size isn't comptime known
+fn readString(
+    marshal: *Marshal,
+    options: struct { size: ?u32 = null, short: bool = false },
+) Error![]u8 {
+    const maybe_size = options.size;
+    const short = options.short;
 
-    String: []const u8,
-    Dict: std.StringArrayHashMap(Result),
-    Tuple: []const Result,
-    None: void,
-    Bool: bool,
+    const size: u32 = maybe_size orelse
+        if (short) marshal.readBytes(1)[0] else marshal.readLong(false);
 
-    /// Both frozenset and set.
-    Set: struct {
-        set: []const Result,
-        frozen: bool,
-    },
-
-    CodeObject: *CodeObject,
-
-    pub fn format(
-        _: Result,
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        _: anytype,
-    ) !void {
-        @compileError("use Result.fmt() instead");
-    }
-
-    // A special pretty printer for Result
-    fn format2(
-        ctx: FormatContext,
-        comptime unused_fmt_bytes: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        std.debug.assert(unused_fmt_bytes.len == 0);
-
-        const co = ctx.co;
-        const result = ctx.result;
-
-        switch (result) {
-            .Int => |int| try writer.print("{d}", .{int}),
-            .Tuple => |tuple| {
-                try writer.print("(", .{});
-                for (tuple, 0..) |tup, i| {
-                    try writer.print("{}", .{tup.fmt(co)});
-
-                    if (i < tuple.len - 1) try writer.print(", ", .{});
-                }
-                try writer.print(")", .{});
-            },
-            .None => try writer.print("None", .{}),
-            .String => |string| try writer.print("{s}", .{string}),
-            .Bool => |boolean| try writer.print("{}", .{boolean}),
-
-            .CodeObject => try writer.print("CodeObject", .{}),
-
-            else => std.debug.panic(
-                "TODO: Result.format2 {s}",
-                .{@tagName(result)},
-            ),
-        }
-    }
-
-    pub fn fmt(self: Result, co: CodeObject) std.fmt.Formatter(format2) {
-        return .{ .data = .{
-            .co = co,
-            .result = self,
-        } };
-    }
-
-    const FormatContext = struct {
-        co: CodeObject,
-        result: Result,
-    };
-};
-
-fn next(marshal: *Marshal) u8 {
-    const byte = marshal.bytes[marshal.cursor];
-    marshal.cursor += 1;
-    return byte;
+    const dst_string = try marshal.allocator.alloc(u8, size);
+    @memcpy(dst_string, marshal.readBytes(size));
+    return dst_string;
 }
 
-fn read_bytes(marshal: *Marshal, count: u32) []const u8 {
-    const bytes = marshal.bytes[marshal.cursor .. marshal.cursor + count];
-    marshal.cursor += count;
+fn readBytes(marshal: *Marshal, n: usize) []const u8 {
+    const bytes = marshal.bytes[marshal.cursor..][0..n];
+    marshal.cursor += n;
     return bytes;
 }
 
-fn read_long(marshal: *Marshal) Result {
-    const bytes = marshal.read_bytes(4);
-    const int = readInt(i32, bytes[0..4], .little);
-    return .{ .Int = int };
-}
+// helper functions
 
-fn read_short(marshal: *Marshal) Result {
-    const bytes = marshal.read_bytes(2);
-    const int = readInt(i16, bytes[0..2], .little);
-    return .{ .Int = int };
-}
-
-fn read_py_long(marshal: *Marshal) Result {
-    const n = marshal.read_long().Int;
-    var result: i32 = 0;
-    var shift: u5 = 0;
-    for (0..@abs(n)) |_| {
-        result += marshal.read_short().Int << shift;
-        shift += PyLong_SHIFT;
-    }
-    return .{ .Int = if (n > 0) result else -result };
-}
-
-fn read_string(
-    marshal: *Marshal,
-    options: struct { size: ?u32 = null, short: bool = false },
-) Result {
-    const string_size: u32 = blk: {
-        if (options.size) |size| {
-            break :blk size;
-        } else {
-            if (options.short) {
-                break :blk readInt(u8, marshal.read_bytes(1)[0..1], .little);
-            } else {
-                break :blk @as(u32, @intCast(marshal.read_long().Int));
-            }
-        }
-    };
-    return .{ .String = marshal.read_bytes(string_size) };
-}
-
-/// Sets the marshal's version.
-fn set_version(marshal: *Marshal, magic_bytes: [4]u8) void {
+fn getVersion(magic_bytes: [4]u8) PythonVersion {
     const magic_number = readInt(u16, magic_bytes[0..2], .little);
 
-    marshal.python_version = switch (magic_number) {
+    return switch (magic_number) {
         // We only support 3.10 bytecode
         3430...3439 => .{ .major = 3, .minor = 10 },
         // 3450...3495 => .{ .major = 3, .minor = 11 },
@@ -377,7 +219,6 @@ fn set_version(marshal: *Marshal, magic_bytes: [4]u8) void {
     };
 }
 
-///  Set's a bit at `offset` in `int`
 fn testBit(int: anytype, comptime offset: u3) bool {
     const mask = @as(u8, 1) << offset;
     return (int & mask) != 0;

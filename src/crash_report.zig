@@ -1,5 +1,6 @@
 //! Overrides the panics to provide more information
 //! Slightly stolen from the Zig Compiler :P
+
 const std = @import("std");
 const CodeObject = @import("compiler/CodeObject.zig");
 const print_co = @import("print_co.zig");
@@ -84,7 +85,7 @@ threadlocal var vm_state: ?*VmContext = if (build_options.enable_debug_extension
 
 pub const VmContext = if (build_options.enable_debug_extensions) struct {
     parent: ?*VmContext,
-    current_co: *const CodeObject,
+    current_co: CodeObject,
     index: usize,
 
     pub fn push(context: *VmContext) void {
@@ -110,7 +111,7 @@ pub const VmContext = if (build_options.enable_debug_extensions) struct {
     pub inline fn setIndex(_: VmContext, _: usize) void {}
 };
 
-pub fn prepVmContext(current_co: *const CodeObject) VmContext {
+pub fn prepVmContext(current_co: CodeObject) VmContext {
     return if (build_options.enable_debug_extensions) .{
         .parent = null,
         .current_co = current_co,
@@ -124,7 +125,7 @@ fn dumpStatusReport() !void {
     const current_co = state.current_co;
 
     try print_co.print_co(stderr, .{
-        .co = current_co.*,
+        .co = current_co,
         .index = state.index,
     });
 
@@ -134,7 +135,7 @@ fn dumpStatusReport() !void {
         if (depth > trace_depth_limit) break;
 
         const co = temp_state.current_co;
-        try stderr.print("CodeObject #{d}:\n{}\n", .{ depth, co.* });
+        try stderr.print("CodeObject #{d}:\n{}\n", .{ depth, co });
 
         temp_state = temp_state.parent.?.*;
     }

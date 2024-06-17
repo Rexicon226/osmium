@@ -11,22 +11,86 @@ const FlagRef = Marshal.FlagRef;
 
 const CodeObject = @This();
 
-filename: []const u8,
-argcount: u32,
-consts: []const Result,
-
-names: []const Result,
 name: []const u8,
-stack_size: u32,
+filename: []const u8,
+
+consts: Object,
+names: Object,
+
+argcount: u32,
+posonlyargcount: u32,
+kwonlyargcount: u32,
+stacksize: u32,
+nlocals: u32,
+firstlineno: u32,
+
 code: []const u8,
-varnames: []Object,
-flag_refs: []const ?FlagRef,
+flags: u32,
 
 /// Only exist after `co.process()` is run.
-instructions: ?[]Instruction = null,
+instructions: ?[]const Instruction = null,
 
-/// Where the VM is at in running this CodeObject
+// variable elements of the codeobject
+varnames: []Object,
 index: usize = 0,
+
+/// Assumes the same allocator was used to allocate every field
+pub fn deinit(co: *CodeObject, allocator: std.mem.Allocator) void {
+    allocator.free(co.name);
+    allocator.free(co.filename);
+    allocator.free(co.code);
+
+    co.consts.deinit(allocator);
+    co.names.deinit(allocator);
+    // co.freevars.deinit(allocator);
+    // co.cellvars.deinit(allocator);
+    // co.lnotab.deinit(allocator);
+
+    for (co.varnames) |*varname| {
+        varname.deinit(allocator);
+    }
+    allocator.free(co.varnames);
+
+    if (co.instructions) |insts| allocator.free(insts);
+
+    co.* = undefined;
+}
+
+/// Duplicates the CodeObject and allocates using the provided allocator.
+///
+/// Caller owns the memory.
+pub fn clone(co: *const CodeObject, allocator: std.mem.Allocator) !CodeObject {
+    return .{
+        .name = try allocator.dupe(u8, co.name),
+        .filename = try allocator.dupe(u8, co.filename),
+        .code = try allocator.dupe(u8, co.code),
+
+        .argcount = co.argcount,
+        .posonlyargcount = co.posonlyargcount,
+        .kwonlyargcount = co.kwonlyargcount,
+        .stacksize = co.stacksize,
+        .nlocals = co.nlocals,
+        .firstlineno = co.firstlineno,
+        .flags = co.flags,
+
+        .consts = try co.consts.clone(allocator),
+        .names = try co.names.clone(allocator),
+        // .freevars = try co.freevars.clone(allocator),
+        // .cellvars = try co.cellvars.clone(allocator),
+        // .lnotab = try co.lnotab.clone(allocator),
+
+        .instructions = if (co.instructions) |insts| try allocator.dupe(Instruction, insts) else null,
+
+        .varnames = varnames: {
+            const new_varnames = try allocator.alloc(Object, co.varnames.len);
+            for (new_varnames, co.varnames) |*new_varname, varname| {
+                new_varname.* = try varname.clone(allocator);
+            }
+            break :varnames new_varnames;
+        },
+        .index = co.index,
+    };
+}
 
 pub fn format(
     self: CodeObject,
@@ -40,16 +104,29 @@ pub fn format(
     try writer.print("Name:\t\t{s}\n", .{self.name});
     try writer.print("Filename:\t{s}\n", .{self.filename});
     try writer.print("Argument count:\t{d}\n", .{self.argcount});
-    try writer.print("Stack size:\t{d}\n", .{self.stack_size});
+    try writer.print("Stack size:\t{d}\n", .{self.stacksize});
 
-    try writer.writeAll("Constants:\n");
-    for (self.consts, 0..) |con, i| {
-        try writer.print("\t{d}: {}\n", .{ i, con.fmt(self) });
+    const consts_tuple = self.consts.get(.tuple);
+    if (consts_tuple.len != 0) {
+        try writer.writeAll("Constants:\n");
+        for (consts_tuple, 0..) |con, i| {
+            try writer.print("\t{d}: {}\n", .{ i, con });
+        }
     }
 
-    try writer.writeAll("Names:\n");
-    for (self.names, 0..) |con, i| {
-        try writer.print("\t{d}: {}\n", .{ i, con.fmt(self) });
+    const names_tuple = self.names.get(.tuple);
+    if (names_tuple.len != 0) {
+        try writer.writeAll("Names:\n");
+        for (names_tuple, 0..) |name, i| {
+            try writer.print("\t{d}: {}\n", .{ i, name });
+        }
+    }
+
+    if (self.varnames.len != 0) {
+        try writer.writeAll("Variables:\n");
+        for (self.varnames, 0..) |varname, i| {
+            try writer.print("\t{d}: {}\n", .{ i, varname });
+        }
     }
 }
 
@@ -83,9 +160,38 @@ pub fn process(
 
 // Helper functions
 
-pub fn getName(
+pub fn getName(co: *const CodeObject, namei: u8) []u8 {
+    const names_tuple = co.names.get(.tuple);
+    return names_tuple[namei].get(.string);
+}
+
+pub fn getConst(co: *const CodeObject, namei: u8) Object {
+    const consts_tuple = co.consts.get(.tuple);
+    return consts_tuple[namei];
+}
+
+const Sha256 = std.crypto.hash.sha2.Sha256;
+
+/// Returns a hash unique to the data stored in the CodeObject
+pub fn hash(
     co: *const CodeObject,
-    namei: u8,
-) []const u8 {
-    return co.names[namei].String;
+) u256 {
+    var hasher = Sha256.init(.{});
+
+    hasher.update(co.filename);
+    hasher.update(co.name);
+    hasher.update(co.code);
+
+    hasher.update(std.mem.asBytes(&co.argcount));
+    hasher.update(std.mem.asBytes(&co.stacksize));
+    hasher.update(std.mem.asBytes(&co.consts));
+    hasher.update(std.mem.asBytes(&co.names));
+    hasher.update(std.mem.asBytes(&co.varnames));
+    hasher.update(std.mem.asBytes(co.instructions.?)); // CodeObject should be processed before hashing
+
+    // we don't hash the index on purpose as it has nothing to do with the unique contents of the object
+    var out: [Sha256.digest_length]u8 = undefined;
+    hasher.final(&out);
+
+    return @bitCast(out);
 }

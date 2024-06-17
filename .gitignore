@@ -6,3 +6,4 @@ traces/
 
 # Don't want any artifacts
 **/__pycache__
+demo/

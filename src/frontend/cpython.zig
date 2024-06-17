@@ -2,6 +2,47 @@
 
 const std = @import("std");
 const tracer = @import("tracer");
+const log = std.log.scoped(.cpython);
+
+const PyPreConfig = extern struct {
+    _config_init: c_int,
+    parse_argv: c_int,
+    isolated: c_int,
+    use_environment: c_int,
+    configure_locale: c_int,
+    coerce_c_locale: c_int,
+    coerce_c_locale_warn: c_int,
+    utf8_mode: c_int,
+    dev_mode: c_int,
+    allocator: c_int,
+
+    pub fn format(
+        config: PyPreConfig,
+        fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        std.debug.assert(fmt.len == 0);
+        try writer.writeAll("\n");
+        inline for (std.meta.fields(PyPreConfig)) |field| {
+            try writer.print("{s}\t\t{}\n", .{
+                field.name,
+                @field(config, field.name),
+            });
+        }
+    }
+};
+
+const PyStatus = extern struct {
+    exitcode: c_int,
+    err_msg: [*:0]const u8,
+    func: [*:0]const u8,
+};
+
+extern fn Py_PreInitialize(*PyPreConfig) PyStatus;
+extern fn PyPreConfig_InitPythonConfig(*PyPreConfig) void;
+extern fn PyStatus_Exception(PyStatus) bool;
+extern fn Py_ExitStatusException(PyStatus) noreturn;
 
 extern fn Py_Initialize() void;
 extern fn Py_Finalize() void;
@@ -18,6 +59,21 @@ extern fn PyBytes_AsString(?*anyopaque) ?[*:0]u8;
 
 const Py_file_input: c_int = 257;
 const Py_MARSHAL_VERSION: c_int = 4;
+
+pub fn PreInitialize() void {
+    var preconfig: PyPreConfig = undefined;
+    PyPreConfig_InitPythonConfig(&preconfig);
+
+    // Enables CPython's UTF-8 Mode.
+    preconfig.utf8_mode = 0;
+
+    // log.debug("PreConfig:\n{}", .{preconfig});
+
+    const status = Py_PreInitialize(&preconfig);
+    if (PyStatus_Exception(status)) {
+        Py_ExitStatusException(status);
+    }
+}
 
 pub fn Initialize() void {
     const t = tracer.trace(@src(), "", .{});

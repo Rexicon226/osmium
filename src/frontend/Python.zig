@@ -1,16 +1,28 @@
 //! Inputs python source and outputs Bytecode
 
-pub fn parse(source: [:0]const u8, allocator: std.mem.Allocator) ![]const u8 {
+pub const Error = error{
+    FailedToCompileString,
+    FailedToWriteObjectToString,
+    FailedToAsStringCode,
+    BytesEmpty,
+};
+
+pub fn parse(
+    source: [:0]const u8,
+    filename: [:0]const u8,
+    allocator: std.mem.Allocator,
+) ![]const u8 {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
-    // TODO: this just causes errors for now
-    // const program = cpython.DecodeLocale(std.mem.span(std.os.argv[0]));
-    // cpython.SetProgramName(program);
+    // TODO: investigate how to correctly pre init, this keeps crashing for some reason
+    // cpython.PreInitialize();
+    // const cname = cpython.DecodeLocale(std.mem.span(std.os.argv[0]));
+    // cpython.SetProgramName(cname);
 
     cpython.Initialize();
 
-    const compiled = cpython.CompileString(source, "<string>");
+    const compiled = cpython.CompileString(source, filename);
     if (null == compiled) {
         return error.FailedToCompileString;
     }

@@ -4,12 +4,16 @@
     .paths = .{""},
     .dependencies = .{
         .tracer = .{
-            .url = "https://github.com/Rexicon226/zig-tracer/archive/f0c24a3e0ecf232493ab2fadc65f06e48956ccba.tar.gz",
-            .hash = "1220857ddca6c829d4b68f35e929b32e4eee13c265bc096c634ae8b3d6da7daf34df",
+            .url = "https://github.com/Rexicon226/zig-tracer/archive/6400e066bb3849be4906f3b6e124d6c8c5a5083f.tar.gz",
+            .hash = "122057453dba0b0cf6f07610d692cc7ab3f1d66defa150c936b398144812564a0c08",
         },
         .python = .{
             .url = "https://github.com/python/cpython/archive/333c7dccd87c637d0b15cf81f9bbec28e39664fd.tar.gz",
             .hash = "1220c520b358bd5e0bbcfae04b2e9e963ad3c3d7cc3b5ba24a0721e60a0123bfb1ea",
+        },
+        .libgc = .{
+            .url = "https://github.com/Rexicon226/zig-libgc/archive/1ea12e140ec1471af5d15dae71b225764c9747ba.tar.gz",
+            .hash = "12209ad7282d9422973afe3e468e2f867bb102d04fa446a1d1c94f900bda94b7c68e",
         },
     },
 }
