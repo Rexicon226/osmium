@@ -67,6 +67,7 @@ pub fn build(b: *std.Build) !void {
     libpython_install.step.dependOn(build_libpython);
     install_libpython.dependOn(&libpython_install.step);
 
+    exe.step.dependOn(build_libpython);
     exe.addObjectFile(libpython_path);
 
     b.getInstallStep().dependOn(install_libpython);

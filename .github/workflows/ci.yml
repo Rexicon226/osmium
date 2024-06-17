@@ -28,7 +28,6 @@ jobs:
           path: |
             ~/.cache/zig
             .zig-cache
-            zig-out/lib
           key: osmium-${{hashFiles('build.zig.zon')}}          
 
       - name: Run Tests
@@ -40,5 +39,4 @@ jobs:
           path: |
             ~/.cache/zig
             .zig-cache
-            zig-out/lib
           key: osmium-${{hashFiles('build.zig.zon')}}         
