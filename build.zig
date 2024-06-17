@@ -1,4 +1,5 @@
 const std = @import("std");
+const CpythonStep = @import("build/CpythonStep.zig");
 
 const cases = @import("tests/cases.zig");
 
@@ -58,16 +59,17 @@ pub fn build(b: *std.Build) !void {
     const libgc_dep = b.dependency("libgc", .{ .optimize = optimize, .target = target });
     exe.root_module.addImport("gc", libgc_dep.module("gc"));
 
-    const cpython_step = b.step("cpython", "Builds libcpython for the host");
-    const cpython_path = try generateLibPython(b, cpython_step, target, optimize);
+    const build_libpython = b.step("build-libpython", "Builds libpython");
+    const libpython_path = try generateLibPython(b, build_libpython, target, optimize);
 
-    exe.step.dependOn(cpython_step);
-    exe.linkLibC();
-    exe.addObjectFile(cpython_path);
+    const install_libpython = b.step("install-libpython", "Installs libpython");
+    const libpython_install = b.addInstallFile(libpython_path, "lib/libpython3.10.a");
+    libpython_install.step.dependOn(build_libpython);
+    install_libpython.dependOn(&libpython_install.step);
 
-    const cpython_install = b.addInstallFile(cpython_path, "lib/libpython3.10.a");
-    cpython_install.step.dependOn(cpython_step);
-    b.getInstallStep().dependOn(&cpython_install.step);
+    exe.addObjectFile(libpython_path);
+
+    b.getInstallStep().dependOn(install_libpython);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -121,43 +123,7 @@ fn generateLibPython(
     optimize: std.builtin.OptimizeMode,
 ) !std.Build.LazyPath {
     const source = b.dependency("python", .{});
-
-    // TODO: cache properly
-    const rebuild = b.option(bool, "rebuild", "Re-build libpython?") orelse true;
-    if (!rebuild) return b.path("zig-out/lib/libpython3.10.a");
-
-    const target_triple = try target.result.linuxTriple(b.allocator);
-
-    const configure_run = std.Build.Step.Run.create(b, "cpython-configure");
-    configure_run.setCwd(source.path("."));
-
-    configure_run.setEnvironmentVariable("CONFIG_SITE", try b.build_root.join(
-        b.allocator,
-        &.{ "build/", b.fmt("config.site-{s}", .{target_triple}) },
-    ));
-    configure_run.setEnvironmentVariable("READELF", "llvm-readelf");
-    configure_run.setEnvironmentVariable("CC", b.fmt("{s} {s}", .{ b.graph.zig_exe, "cc" }));
-    configure_run.setEnvironmentVariable("CXX", b.fmt("{s} {s}", .{ b.graph.zig_exe, "c++" }));
-    configure_run.setEnvironmentVariable("CFLAGS", b.fmt("-target {s}", .{target_triple}));
-
-    configure_run.addFileArg(source.path("configure"));
-    configure_run.addArgs(&.{
-        "--disable-shared",
-        if (optimize == .Debug) "" else "--enable-optimizations",
-    });
-    configure_run.addArg(b.fmt("--host={s}", .{target_triple}));
-    configure_run.addArg(b.fmt("--build={s}", .{try b.host.result.linuxTriple(b.allocator)}));
-    configure_run.addArg("--disable-ipv6");
-
-    const make_run = std.Build.Step.Run.create(b, "cpython-make");
-    make_run.setCwd(source.path("."));
-    configure_run.setEnvironmentVariable("CFLAGS", b.fmt("-target {s}", .{target_triple}));
-    make_run.addArgs(&.{
-        "make", b.fmt("-j{d}", .{try std.Thread.getCpuCount()}),
-    });
-    make_run.addArg("libpython3.10.a");
-
-    make_run.step.dependOn(&configure_run.step);
-    step.dependOn(&make_run.step);
-    return source.path("libpython3.10.a");
+    const cpython = CpythonStep.create(b, source.path("."), target, optimize);
+    step.dependOn(&cpython.step);
+    return .{ .generated = .{ .file = &cpython.output_file } };
 }

@@ -1,3 +1,3 @@
 import b
 
-print(b)
+print(b.c)
