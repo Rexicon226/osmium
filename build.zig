@@ -59,18 +59,16 @@ pub fn build(b: *std.Build) !void {
     const libgc_dep = b.dependency("libgc", .{ .optimize = optimize, .target = target });
     exe.root_module.addImport("gc", libgc_dep.module("gc"));
 
-    const build_libpython = b.step("build-libpython", "Builds libpython");
+    const build_libpython = b.step("libpython", "Builds libpython");
     const libpython_path = try generateLibPython(b, build_libpython, target, optimize);
 
-    const install_libpython = b.step("install-libpython", "Installs libpython");
     const libpython_install = b.addInstallFile(libpython_path, "lib/libpython3.10.a");
     libpython_install.step.dependOn(build_libpython);
-    install_libpython.dependOn(&libpython_install.step);
 
     exe.step.dependOn(build_libpython);
     exe.addObjectFile(libpython_path);
 
-    b.getInstallStep().dependOn(install_libpython);
+    b.getInstallStep().dependOn(&libpython_install.step);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

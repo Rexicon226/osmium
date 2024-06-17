@@ -168,7 +168,7 @@ pub fn clone(object: *const Object, allocator: Allocator) !Object {
         inline .int => |t| blk: {
             const old_int = object.get(.int).*;
             const new_ptr = try t.allocate(allocator, null);
-            const new_int = try old_int.clone();
+            const new_int = try old_int.cloneWithDifferentAllocator(allocator);
             new_ptr.* = new_int;
             break :blk .{ .single = @ptrCast(new_ptr) };
         },

@@ -102,11 +102,20 @@ fn make(step: *std.Build.Step, prog: std.Progress.Node) anyerror!void {
             .env_map = &configure_env_map,
             .cwd_dir = cache_dir,
         }) catch |err| return step.fail("unable to spawn {s}: {s}", .{ configure_args[0], @errorName(err) });
-        if (configure_result.term != .Exited) return step.fail("configure child not exited", .{});
+        if (configure_result.term != .Exited) return step.fail("configure not exited", .{});
+        if (configure_result.term.Exited != 0) return step.fail(
+            "configure exited with code {d}",
+            .{configure_result.term.Exited},
+        );
     }
 
     {
-        try args.appendSlice(&.{ "make", "-s", b.fmt("-j{d}", .{try std.Thread.getCpuCount()}), "libpython3.10.a" });
+        try args.appendSlice(&.{
+            "make",
+            "-s",
+            b.fmt("-j{d}", .{try std.Thread.getCpuCount()}),
+            "libpython3.10.a",
+        });
 
         var make_env_map = std.process.EnvMap.init(b.allocator);
         try make_env_map.put("CFLAGS", b.fmt("-target {s}", .{target_triple}));
@@ -128,8 +137,17 @@ fn make(step: *std.Build.Step, prog: std.Progress.Node) anyerror!void {
             .env_map = &make_env_map,
             .cwd_dir = cache_dir,
         }) catch |err| return step.fail("unable to spawn {s}: {s}", .{ make_args[0], @errorName(err) });
-        if (make_result.term != .Exited) return step.fail("make child not exited", .{});
+        if (make_result.term != .Exited) return step.fail("make not exited", .{});
+        if (make_result.term.Exited != 0) return step.fail(
+            "make exited with code {d}",
+            .{make_result.term.Exited},
+        );
     }
+
+    self.output_file.path = try b.cache_root.join(
+        b.allocator,
+        &.{ "o", &digest, "libpython3.10.a" },
+    );
 
     try step.writeManifest(&man);
 }
