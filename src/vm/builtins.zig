@@ -8,11 +8,15 @@ const Object = @import("Object.zig");
 const Python = @import("../frontend/Python.zig");
 const Marshal = @import("../compiler/Marshal.zig");
 
+const BigIntConst = std.math.big.int.Const;
+const BigIntMutable = std.math.big.int.Mutable;
+const BigIntManaged = std.math.big.int.Managed;
+
+const log = std.log.scoped(.builtins);
+
 const Vm = @import("Vm.zig");
 const fatal = @import("panic.zig").fatal;
 const assert = std.debug.assert;
-
-const log = std.log.scoped(.builtins);
 
 pub const KW_Type = std.StringHashMap(Object);
 
@@ -20,6 +24,8 @@ pub const BuiltinError =
     error{OutOfMemory} ||
     std.fs.File.OpenError ||
     std.fs.File.ReadError ||
+    error{ StreamTooLong, EndOfStream } ||
+    std.fmt.ParseIntError ||
     Python.Error;
 
 pub const func_proto = fn (*Vm, []const Object, kw: ?KW_Type) BuiltinError!void;
@@ -29,6 +35,8 @@ pub const builtin_fns = &.{
     // // zig fmt: off
     .{ "abs", abs },
     .{ "bool", @"bool" },
+    .{ "input", input },
+    .{ "int", int },
     .{ "print", print },
     .{ "getattr", getattr },
     .{ "__import__", __import__ },
@@ -55,9 +63,9 @@ fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     const val = value: {
         switch (arg.tag) {
             .int => {
-                var int = arg.get(.int).*;
-                int.abs();
-                const abs_val = try vm.createObject(.int, int);
+                var integer = arg.get(.int).*;
+                integer.abs();
+                const abs_val = try vm.createObject(.int, integer);
                 break :value abs_val;
             },
             else => fatal("cannot abs() on type: {s}", .{@tagName(arg.tag)}),
@@ -112,6 +120,48 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     try vm.stack.append(vm.allocator, return_val);
 }
 
+fn input(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+    if (args.len > 1) fatal("input() takes at most 1 argument ({d} given)", .{args.len});
+    if (null != maybe_kw) fatal("input() takes no positional arguments", .{});
+
+    if (args.len == 1) {
+        const prompt = args[0];
+        const prompt_string = prompt.get(.string);
+
+        const stdout = std.io.getStdOut();
+        printSafe(stdout.writer(), "{s}", .{prompt_string});
+    }
+
+    const stdin = std.io.getStdIn();
+    const reader = stdin.reader();
+
+    var buffer = std.ArrayList(u8).init(vm.allocator);
+    try reader.streamUntilDelimiter(buffer.writer(), '\n', 10 * 1024); // TODO: is there a limit?
+
+    const output = try vm.createObject(.string, try buffer.toOwnedSlice());
+    try vm.stack.append(vm.allocator, output);
+}
+
+fn int(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+    if (args.len != 1) fatal("int() takes exactly 1 argument ({d} given)", .{args.len});
+    if (null != maybe_kw) fatal("int() takes no positional arguments", .{});
+
+    const in = args[0];
+    const result: Object = switch (in.tag) {
+        .string => blk: {
+            const string = in.get(.string);
+            // TODO: create a function for parsing arbitrarily long strings into big ints
+            const num = try std.fmt.parseInt(u64, string, 10);
+            const new_int = try BigIntManaged.initSet(vm.allocator, num);
+            const new_obj = try vm.createObject(.int, new_int);
+            break :blk new_obj;
+        },
+        else => |tag| fatal("TODO: int() {s}", .{@tagName(tag)}),
+    };
+
+    try vm.stack.append(vm.allocator, result);
+}
+
 fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     assert(maybe_kw == null);
     if (args.len != 2) fatal("getattr() takes exactly two arguments ({d} given)", .{args.len});
@@ -126,8 +176,14 @@ fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void 
         else => fatal("getattr(), type {s} doesn't have any attributes", .{@tagName(obj.tag)}),
     };
 
-    const attr_obj = dict.get(name_string) orelse
+    const attr_obj = dict.get(name_string) orelse {
+        var iter = dict.iterator();
+        while (iter.next()) |entry| {
+            std.debug.print("{s} : {}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+        }
+
         fatal("object {} doesn't have an attribute named {s}", .{ obj, name_string });
+    };
 
     try vm.stack.append(vm.allocator, attr_obj);
 }
@@ -155,11 +211,11 @@ fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
         .bool_true => true,
         .bool_false => false,
         .int => int: {
-            const int = arg.get(.int);
+            const integer = arg.get(.int);
             var zero = try std.math.big.int.Managed.initSet(vm.allocator, 0);
             defer zero.deinit();
 
-            if (int.eql(zero)) break :int false;
+            if (integer.eql(zero)) break :int false;
             break :int true;
         },
         .string => string: {
@@ -177,9 +233,7 @@ fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     try vm.stack.append(vm.allocator, val);
 }
 
-fn __import__(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
-    _ = kw;
-
+fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     if (args.len != 1) fatal("__import__() takes exactly 1 arguments ({d} given)", .{args.len});
     const mod_name_obj = args[0];
     assert(mod_name_obj.tag == .string);
@@ -249,15 +303,42 @@ fn __import__(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
         assert(mod_vm.is_running == false);
 
         const mod_scope = mod_vm.scopes.items[0];
-        var global_scope = try mod_scope.clone(vm.allocator);
+        var global_scope: std.StringHashMapUnmanaged(Object) = .{};
+
+        const fromlist: ?Object = if (maybe_kw) |kw| kw.get("fromlist") else null;
 
         var iter = mod_scope.iterator();
         while (iter.next()) |entry| {
-            try global_scope.put(
-                vm.allocator,
-                try vm.allocator.dupe(u8, entry.key_ptr.*),
-                try entry.value_ptr.clone(vm.allocator),
-            );
+            const name: []const u8 = entry.key_ptr.*;
+
+            // the goal of the fromlist is to only append entries that exist both in the list
+            // and in the source module
+            if (fromlist) |list| exit: {
+                const tuple = list.get(.tuple);
+                for (tuple) |fromentry| {
+                    const from_name = fromentry.get(.string);
+                    if (std.mem.eql(u8, from_name, name)) {
+                        try global_scope.put(
+                            vm.allocator,
+                            try vm.allocator.dupe(u8, name),
+                            try entry.value_ptr.clone(vm.allocator),
+                        );
+                        break :exit;
+                    }
+                }
+                break :exit;
+            } else {
+                try global_scope.put(
+                    vm.allocator,
+                    try vm.allocator.dupe(u8, name),
+                    try entry.value_ptr.clone(vm.allocator),
+                );
+            }
+        }
+
+        var iter_ = global_scope.iterator();
+        while (iter_.next()) |entry| {
+            log.debug("BEFORE: {s}: {}", .{ entry.key_ptr.*, entry.value_ptr.* });
         }
 
         break :file .{
@@ -265,6 +346,11 @@ fn __import__(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
             .dict = global_scope,
         };
     };
+
+    var iter = loaded_mod.dict.iterator();
+    while (iter.next()) |entry| {
+        log.debug("AFTER: {s}: {}", .{ entry.key_ptr.*, entry.value_ptr.* });
+    }
 
     const new_mod = try vm.createObject(
         .module,

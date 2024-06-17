@@ -172,6 +172,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .LOAD_ATTR => try vm.execLoadAttr(inst),
 
         .BUILD_LIST => try vm.execBuildList(inst),
+        .BUILD_TUPLE => try vm.execBuildTuple(inst),
         .BUILD_SET => try vm.execBuildSet(inst),
 
         .STORE_NAME => try vm.execStoreName(inst),
@@ -261,7 +262,8 @@ fn execLoadAttr(vm: *Vm, inst: Instruction) !void {
 
 fn execStoreName(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
-    const tos = vm.stack.pop();
+    // NOTE: STORE_NAME does NOT pop the stack, it only stores the TOS.
+    const tos = vm.stack.items[vm.stack.items.len - 1];
     try vm.scopes.items[vm.depth].put(vm.allocator, name, tos);
 }
 
@@ -283,6 +285,13 @@ fn execBuildList(vm: *Vm, inst: Instruction) !void {
     _ = vm;
 
     @panic("TODO: execBuildList count != 0");
+}
+
+fn execBuildTuple(vm: *Vm, inst: Instruction) !void {
+    const count = inst.extra;
+    const objects = try vm.popNObjects(count);
+    const val = try vm.createObject(.tuple, objects);
+    try vm.stack.append(vm.allocator, val);
 }
 
 fn execBuildSet(vm: *Vm, inst: Instruction) !void {
@@ -487,10 +496,17 @@ fn execPopJump(vm: *Vm, inst: Instruction, case: bool) !void {
 }
 
 fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
-    if (inst.extra != 0x00) @panic("Don't support function flags yet");
+    const arg_ty: Object.Payload.PythonFunction.ArgType = @enumFromInt(inst.extra);
 
     const name_object = vm.stack.pop();
     const co_object = vm.stack.pop();
+
+    const extra = switch (arg_ty) {
+        .none => null,
+        .string_tuple => vm.stack.pop(),
+        else => std.debug.panic("TODO: execMakeFunction {s}", .{@tagName(arg_ty)}),
+    };
+    _ = extra;
 
     assert(name_object.tag == .string);
     assert(co_object.tag == .codeobject);
@@ -549,9 +565,13 @@ fn execImportName(vm: *Vm, inst: Instruction) !void {
 }
 
 fn execImportFrom(vm: *Vm, inst: Instruction) !void {
-    const attr_name = vm.co.getName(inst.extra);
+    const names = vm.co.names.get(.tuple);
+    const attr_name = names[inst.extra];
 
-    _ = attr_name;
+    const mod = vm.stack.pop();
+
+    const getattr_fn = builtins.getBuiltin("getattr");
+    try @call(.auto, getattr_fn, .{ vm, &.{ mod, attr_name }, null });
 }
 
 // Helpers

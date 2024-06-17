@@ -147,7 +147,9 @@ pub fn init(comptime t: Tag) Object {
     return .{ .tag = t, .payload = undefined };
 }
 
-pub fn clone(object: *const Object, allocator: Allocator) !Object {
+const CloneError = error{OutOfMemory};
+
+pub fn clone(object: *const Object, allocator: Allocator) CloneError!Object {
     assert(@intFromEnum(object.tag) >= Tag.first_payload);
 
     const ptr: PayloadTy = switch (object.tag) {
@@ -170,6 +172,13 @@ pub fn clone(object: *const Object, allocator: Allocator) !Object {
             const new_ptr = try t.allocate(allocator, null);
             const new_int = try old_int.cloneWithDifferentAllocator(allocator);
             new_ptr.* = new_int;
+            break :blk .{ .single = @ptrCast(new_ptr) };
+        },
+        inline .function => |t| blk: {
+            const old_function = object.get(.function);
+            const new_ptr = try t.allocate(allocator, null);
+            new_ptr.name = try allocator.dupe(u8, old_function.name);
+            new_ptr.co = try old_function.co.clone(allocator);
             break :blk .{ .single = @ptrCast(new_ptr) };
         },
         inline else => |tag| blk: {
@@ -345,6 +354,14 @@ pub const Payload = union(enum) {
         name: []const u8,
         co: Co,
 
+        pub const ArgType = enum(u8) {
+            none = 0x00,
+            tuple = 0x01,
+            dict = 0x02,
+            string_tuple = 0x04,
+            closure = 0x08,
+        };
+
         pub fn deinit(func: *PythonFunction, allocator: std.mem.Allocator) void {
             func.co.deinit(allocator);
             allocator.free(func.name);
@@ -494,6 +511,13 @@ pub fn format(
         .zig_function => {
             const function = object.get(.zig_function);
             try writer.print("<zig_function @ 0x{d}>", .{@intFromPtr(function)});
+        },
+        .function => {
+            const function = object.get(.function);
+            try writer.print("<function {s} at 0x{d}>", .{
+                function.name,
+                @intFromPtr(&function.co),
+            });
         },
 
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
