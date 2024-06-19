@@ -3,7 +3,7 @@ const Object = @This();
 const std = @import("std");
 const Vm = @import("Vm.zig");
 const builtins = @import("builtins.zig");
-const Co = @import("../compiler/CodeObject.zig");
+const CodeObject = @import("../compiler/CodeObject.zig");
 
 const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
@@ -16,6 +16,8 @@ const log = std.log.scoped(.object);
 
 tag: Tag,
 payload: PayloadTy,
+// A unique ID each object has
+id: u32,
 
 const PayloadTy = union {
     single: *anyopaque,
@@ -61,7 +63,7 @@ pub const Tag = enum(usize) {
             .set => Payload.Set,
 
             .zig_function => Payload.ZigFunc,
-            .codeobject => Co,
+            .codeobject => CodeObject,
             .function => Payload.PythonFunction,
 
             .module => Payload.Module,
@@ -122,27 +124,35 @@ fn isInlinePtr(ty: type) bool {
     return false;
 }
 
+var global_id: u32 = 0;
+pub var alive_map: std.AutoArrayHashMapUnmanaged(u32, bool) = .{};
+
 pub fn create(comptime t: Tag, allocator: Allocator, data: Data(t)) error{OutOfMemory}!Object {
     assert(@intFromEnum(t) >= Tag.first_payload);
+
+    const new_id = global_id;
+    global_id += 1;
+    try alive_map.put(allocator, new_id, true);
 
     switch (t) {
         .string, .tuple => {
             var payload_ptr: []void = undefined;
             payload_ptr.len = data.len;
             payload_ptr.ptr = @ptrCast(data.ptr);
-            return .{ .tag = t, .payload = .{ .double = payload_ptr } };
+            return .{ .tag = t, .payload = .{ .double = payload_ptr }, .id = new_id };
         },
         else => {
             const ptr = try t.allocate(allocator, null);
             ptr.* = data;
-            return .{ .tag = t, .payload = .{ .single = @ptrCast(ptr) } };
+            return .{ .tag = t, .payload = .{ .single = @ptrCast(ptr) }, .id = new_id };
         },
     }
 }
 
 pub fn init(comptime t: Tag) Object {
     assert(@intFromEnum(t) < Tag.first_payload);
-    return .{ .tag = t, .payload = undefined };
+    defer global_id += 1;
+    return .{ .tag = t, .payload = undefined, .id = global_id };
 }
 
 const CloneError = error{OutOfMemory};
@@ -151,6 +161,10 @@ pub fn clone(object: *const Object, allocator: Allocator) CloneError!Object {
     if (@intFromEnum(object.tag) < Tag.first_payload) {
         return object.*; // nothing deeper to clone
     }
+
+    const new_id = global_id;
+    global_id += 1;
+    try alive_map.put(allocator, new_id, true);
 
     const ptr: PayloadTy = switch (object.tag) {
         .none => unreachable,
@@ -195,14 +209,17 @@ pub fn clone(object: *const Object, allocator: Allocator) CloneError!Object {
             break :blk .{ .single = @ptrCast(new_ptr) };
         },
     };
-    return .{ .tag = object.tag, .payload = ptr };
+    return .{ .tag = object.tag, .payload = ptr, .id = new_id };
 }
 
+// Deallocates the payload, but keeps the
 pub fn deinit(object: *Object, allocator: Allocator) void {
     const t = object.tag;
     if (@intFromEnum(t) < Tag.first_payload) return; // nothing to free
 
-    // if it has a .deinit decl, we call that
+    const liveness = alive_map.get(object.id) orelse @panic("deinit ID not found");
+    if (!liveness) return; // this payload isn't alive anymore
+
     switch (t) {
         .none => unreachable,
         .float => unreachable,
@@ -220,6 +237,7 @@ pub fn deinit(object: *Object, allocator: Allocator) void {
             allocator.free(string);
         },
         inline else => |tag| {
+            // if it has a .deinit decl, we call that
             const data_ty = Data(tag);
             switch (@typeInfo(data_ty)) {
                 .Struct, .Enum, .Union => {
@@ -232,14 +250,14 @@ pub fn deinit(object: *Object, allocator: Allocator) void {
                 else => {},
             }
 
-            // for inline types, a general free
             allocator.free(@as(
-                [*]align(@alignOf(data_ty)) const u8,
+                [*]align(@alignOf(data_ty)) u8,
                 @alignCast(@ptrCast(object.payload.single)),
             )[0..@sizeOf(data_ty)]);
         },
     }
 
+    alive_map.getEntry(object.id).?.value_ptr.* = false;
     object.* = undefined;
 }
 
@@ -253,28 +271,6 @@ pub fn get(object: *const Object, comptime t: Tag) PtrData(t) {
         return many[0..object.payload.double.len];
     } else {
         return @alignCast(@ptrCast(object.payload.single));
-    }
-}
-
-/// Copies the payload to new memory, frees the object.
-pub fn getOwnedPayload(object: *Object, comptime t: Tag, allocator: Allocator) !Data(t) {
-    defer object.deinit(allocator);
-    switch (t) {
-        .string, .tuple => {
-            const old_mem = object.get(t);
-            const new_ptr = try t.allocate(allocator, old_mem.len);
-            if (t == .tuple) {
-                for (new_ptr, old_mem) |*dst, src| {
-                    dst.* = src.clone(allocator);
-                }
-            } else {
-                @memcpy(new_ptr, old_mem);
-            }
-            return new_ptr;
-        },
-        else => {
-            return object.get(t).*;
-        },
     }
 }
 
@@ -313,7 +309,7 @@ pub const Payload = union(enum) {
     tuple: Tuple,
     set: Set,
     list: List,
-    codeobject: Co,
+    codeobject: CodeObject,
     function: PythonFunction,
 
     pub const Int = BigIntManaged;
@@ -359,7 +355,7 @@ pub const Payload = union(enum) {
 
     pub const PythonFunction = struct {
         name: []const u8,
-        co: Co,
+        co: CodeObject,
 
         pub const ArgType = enum(u8) {
             none = 0x00,
@@ -427,6 +423,8 @@ pub const Payload = union(enum) {
             set.* = undefined;
         }
     };
+
+    pub const Ref = Object;
 
     pub const Module = struct {
         name: []const u8,
@@ -526,6 +524,10 @@ pub fn format(
                 @intFromPtr(&function.co),
             });
         },
+        // .codeobject => {
+        //     const co = object.get(.codeobject);
+        //     try writer.print("{}", .{co.*});
+        // },
 
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
     }

@@ -97,7 +97,6 @@ pub fn run(
     assert(vm.scopes.items.len == 0); // global scope must be the first
     try vm.scopes.append(vm.allocator, global_scope);
 
-    // Generate instruction wrapper.
     try vm.co.process(vm.allocator);
 
     // Add the builtin functions to the scope.
@@ -330,7 +329,6 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
         },
         .function => {
             const func = func_object.get(.function);
-            try func.co.process(vm.allocator);
 
             // we don't allow for recursive function calls yet
             const current_hash = vm.co.hash();
@@ -550,11 +548,12 @@ fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
     assert(co_object.tag == .codeobject);
 
     const name = name_object.get(.string);
-    const co = co_object.get(.codeobject).*;
+    var co = co_object.get(.codeobject);
+    try co.process(vm.allocator);
 
     const function = try vm.createObject(.function, .{
         .name = name,
-        .co = co,
+        .co = co.*,
     });
 
     try vm.stack.append(vm.allocator, function);
@@ -615,6 +614,8 @@ fn execImportFrom(vm: *Vm, inst: Instruction) !void {
 // Helpers
 
 /// Pops `n` items off the stack in reverse order and returns them.
+///
+/// Caller owns the slice.
 fn popNObjects(vm: *Vm, n: usize) ![]Object {
     const objects = try vm.allocator.alloc(Object, n);
 

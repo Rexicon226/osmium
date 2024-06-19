@@ -51,7 +51,9 @@ pub fn deinit(co: *CodeObject, allocator: std.mem.Allocator) void {
     }
     allocator.free(co.varnames);
 
-    if (co.instructions) |insts| allocator.free(insts);
+    if (co.instructions) |insts| {
+        allocator.free(insts);
+    }
 
     co.* = undefined;
 }
@@ -136,22 +138,16 @@ pub fn process(
 ) !void {
     const bytes = co.code;
     const num_instructions = bytes.len / 2;
-    var instructions = try allocator.alloc(Instruction, num_instructions);
+    const instructions = try allocator.alloc(Instruction, num_instructions);
 
-    var i: usize = 0;
-    for (0..num_instructions) |cursor| {
-        const window = bytes[cursor * 2 ..][0..2];
-        const byte = window[0];
-        const op: OpCode = @enumFromInt(byte);
-
-        const has_arg = byte >= 90;
-
-        const inst: Instruction = .{
-            .op = op,
-            .extra = if (has_arg) window[1] else undefined,
+    var cursor: usize = 0;
+    for (0..num_instructions) |i| {
+        const byte = bytes[cursor];
+        instructions[i] = .{
+            .op = @enumFromInt(byte),
+            .extra = if (byte >= 90) bytes[cursor + 1] else 0,
         };
-        instructions[i] = inst;
-        i += 1;
+        cursor += 2;
     }
 
     co.instructions = instructions;

@@ -32,9 +32,7 @@ pub fn build(b: *std.Build) !void {
         \\Uses llvm to compile Osmium. Default true.
     ) orelse true;
 
-    const debug_log = b.option(std.log.Level, "debug-log",
-        \\Enable debug logging.
-    ) orelse .info;
+    const enable_logging = b.option(bool, "log", "Enable debug logging.") orelse false;
 
     const enable_debug_extensions = b.option(
         bool,
@@ -48,7 +46,7 @@ pub fn build(b: *std.Build) !void {
     const exe_options = b.addOptions();
     exe_options.addOption(bool, "trace", trace);
     exe_options.addOption(TraceBackend, "backend", backend);
-    exe_options.addOption(std.log.Level, "debug_log", debug_log);
+    exe_options.addOption(bool, "enable_logging", enable_logging);
     exe_options.addOption(usize, "src_file_trimlen", std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?.len);
     exe_options.addOption(bool, "enable_debug_extensions", enable_debug_extensions);
     exe.root_module.addOptions("options", exe_options);
