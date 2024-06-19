@@ -7,6 +7,6 @@ def fibonacci_sequence(limit):
         i += 1
     return fib_seq
 
-limit = 100000
+limit = 25
 fib_seq = fibonacci_sequence(limit)
-# print(fib_seq)
+print(fib_seq)
