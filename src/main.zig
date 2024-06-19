@@ -5,6 +5,7 @@ const Python = @import("frontend/Python.zig");
 const Marshal = @import("compiler/Marshal.zig");
 const Vm = @import("vm/Vm.zig");
 const crash_report = @import("crash_report.zig");
+const Object = @import("vm/Object.zig");
 
 const build_options = @import("options");
 
@@ -19,27 +20,48 @@ pub const tracer_impl = switch (tracer_backend) {
 const gc = @import("gc");
 const GcAllocator = gc.GcAllocator;
 
-const log = std.log.scoped(.main);
+const main_log = std.log.scoped(.main);
 
 const version = "0.1.0";
 
-const ArgFlags = struct {
-    file_path: ?[:0]const u8 = null,
-    is_pyc: bool = false,
-    debug_print: bool = false,
-};
-
 pub const std_options: std.Options = .{
-    .log_level = switch (build_options.debug_log) {
-        .info => .info,
-        .warn => .warn,
-        .err => .err,
-        .debug => .debug,
+    .log_level = switch (builtin.mode) {
+        .Debug => .debug,
+        .ReleaseSafe, .ReleaseFast => .info,
+        .ReleaseSmall => .err,
     },
+    .logFn = log,
     .enable_segfault_handler = false, // we have our own!
 };
 
 pub const panic = crash_report.panic;
+
+var log_scopes: std.ArrayListUnmanaged([]const u8) = .{};
+
+pub fn log(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (@intFromEnum(level) > @intFromEnum(std.options.log_level) or
+        @intFromEnum(level) > @intFromEnum(std.log.Level.info))
+    {
+        if (!build_options.enable_logging) return;
+
+        const scope_name = @tagName(scope);
+        for (log_scopes.items) |log_scope| {
+            if (std.mem.eql(u8, log_scope, scope_name))
+                break;
+        } else return;
+    }
+
+    const prefix1 = comptime level.asText();
+    const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+
+    // Print the message to stderr, silently ignoring any errors
+    std.debug.print(prefix1 ++ prefix2 ++ format ++ "\n", args);
+}
 
 pub fn main() !u8 {
     crash_report.initialize();
@@ -50,7 +72,6 @@ pub fn main() !u8 {
         if (builtin.link_libc) break :blk std.heap.c_allocator;
         @panic("osmium doesn't support non-libc compilations yet");
     };
-
     defer {
         _ = gpa.deinit();
 
@@ -59,68 +80,49 @@ pub fn main() !u8 {
             tracer.deinit_thread();
         }
     }
+    defer log_scopes.deinit(allocator);
 
     if (tracer_backend != .None) {
-        const dir = try std.fs.cwd().makeOpenPath("traces/");
+        const dir = try std.fs.cwd().makeOpenPath("traces/", .{});
 
         try tracer.init();
         try tracer.init_thread(dir);
     }
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    var args = try std.process.ArgIterator.initWithAllocator(allocator);
+    defer args.deinit();
 
-    if (args.len > 2) {
-        usage();
-        return 0;
-    }
+    var file_path: ?[:0]const u8 = null;
 
-    var options = ArgFlags{};
-
-    for (args) |arg| {
-        if ((isEqual(arg, "--help")) or isEqual(arg, "-h")) {
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             usage();
             return 0;
-        }
-
-        if ((isEqual(arg, "--version")) or isEqual(arg, "-v")) {
+        } else if (std.mem.eql(u8, arg, "--version") or std.mem.eql(u8, arg, "-v")) {
             versionPrint();
             return 0;
-        }
-
-        // Check if a .py file.
-        if (std.mem.endsWith(u8, arg, ".py")) {
-            if (options.file_path) |_| {
-                usage();
-                return 0;
+        } else if (std.mem.endsWith(u8, arg, ".py")) {
+            if (file_path) |earlier_path| {
+                fatal("two .py files passed, first was: {s}", .{earlier_path});
             }
-
-            options.file_path = arg;
-        }
-
-        if (std.mem.endsWith(u8, arg, ".pyc")) {
-            if (options.file_path) |_| {
-                usage();
-                return 0;
+            file_path = arg;
+        } else if (std.mem.eql(u8, arg, "--debug-log")) {
+            if (!build_options.enable_logging) {
+                main_log.warn("Osmium compiled without -Dlog, --debug-log has no effect", .{});
+            } else {
+                const scope = args.next() orelse fatal("--debug-log expects scope", .{});
+                try log_scopes.append(allocator, scope);
             }
-
-            options.file_path = arg;
-            options.is_pyc = true;
         }
     }
 
-    if (options.file_path) |file_path| {
-        if (options.is_pyc) {
-            @panic("TODO: support pyc files again");
-        } else {
-            try run_file(allocator, file_path);
-        }
+    if (file_path) |path| {
+        try run_file(allocator, path);
         return 0;
     }
 
-    log.err("expected a file!", .{});
     usage();
-    return 1;
+    fatal("expected a file!", .{});
 }
 
 fn usage() void {
@@ -136,7 +138,7 @@ fn usage() void {
 
     const stdout = std.io.getStdOut().writer();
     stdout.print(usage_string, .{}) catch |err| {
-        std.debug.panic("Failed to print usage: {}\n", .{err});
+        fatal("Failed to print usage: {}\n", .{err});
     };
 }
 
@@ -144,12 +146,13 @@ fn versionPrint() void {
     const stdout = std.io.getStdOut().writer();
 
     stdout.print("Osmium {s}, created by David Rubin\n", .{version}) catch |err| {
-        std.debug.panic("Failed to print version: {s}\n", .{@errorName(err)});
+        fatal("Failed to print version: {s}\n", .{@errorName(err)});
     };
 }
 
-fn isEqual(a: []const u8, b: []const u8) bool {
-    return std.mem.eql(u8, a, b);
+fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
+    std.debug.print(fmt, args);
+    std.posix.exit(1);
 }
 
 pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
@@ -163,38 +166,30 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
         }
     };
     defer source_file.close();
-
     const source_file_size = (try source_file.stat()).size;
-
-    const source = try source_file.readToEndAllocOptions(
-        allocator,
-        source_file_size,
-        source_file_size,
-        @alignOf(u8),
-        0,
-    );
+    const source = try source_file.readToEndAllocOptions(allocator, source_file_size, source_file_size, @alignOf(u8), 0);
     defer allocator.free(source);
 
-    gc.enable();
-    gc.setFindLeak(build_options.debug_log == .debug);
     const gc_allocator = gc.allocator();
+    gc.enable();
+    gc.setFindLeak(build_options.enable_logging);
+    defer gc.collect();
 
-    // by its nature this process is very difficult to not leak in and takes more perf
-    // to cleanup than to just pool.
+    const pyc = try Python.parse(source, file_name, allocator);
+    defer allocator.free(pyc);
 
-    const temp_arena = std.heap.ArenaAllocator.init(allocator);
-    const pyc = try Python.parse(source, file_name, gc_allocator);
     var marshal = try Marshal.init(gc_allocator, pyc);
-    const object = try marshal.parse();
-    const owned_object = try object.clone(gc_allocator);
-    temp_arena.deinit();
+    defer Object.alive_map.deinit(gc_allocator);
+    defer marshal.deinit();
 
-    var vm = try Vm.init(gc_allocator, file_name, owned_object);
-    try vm.initBuiltinMods(std.fs.path.dirname(file_name) orelse
-        @panic("passed in dir instead of file"));
+    const seed = try marshal.parse();
+    var vm = try Vm.init(gc_allocator, file_name, seed);
+    {
+        var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
+        try vm.initBuiltinMods(std.fs.path.dirname(source_file_path) orelse unreachable);
+    }
 
     try vm.run();
     defer vm.deinit();
-
-    gc.collect();
 }

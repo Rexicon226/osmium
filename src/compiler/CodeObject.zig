@@ -51,7 +51,9 @@ pub fn deinit(co: *CodeObject, allocator: std.mem.Allocator) void {
     }
     allocator.free(co.varnames);
 
-    if (co.instructions) |insts| allocator.free(insts);
+    if (co.instructions) |insts| {
+        allocator.free(insts);
+    }
 
     co.* = undefined;
 }
@@ -134,27 +136,21 @@ pub fn process(
     co: *CodeObject,
     allocator: std.mem.Allocator,
 ) !void {
-    var instructions = std.ArrayList(Instruction).init(allocator);
-
     const bytes = co.code;
+    const num_instructions = bytes.len / 2;
+    const instructions = try allocator.alloc(Instruction, num_instructions);
 
-    var cursor: u32 = 0;
-    while (cursor < bytes.len) {
+    var cursor: usize = 0;
+    for (0..num_instructions) |i| {
         const byte = bytes[cursor];
-        const op: OpCode = @enumFromInt(byte);
-
-        const has_arg = byte >= 90;
-
-        const inst: Instruction = .{
-            .op = op,
-            .extra = if (has_arg) bytes[cursor + 1] else undefined,
+        instructions[i] = .{
+            .op = @enumFromInt(byte),
+            .extra = if (byte >= 90) bytes[cursor + 1] else 0,
         };
-        try instructions.append(inst);
         cursor += 2;
-        continue;
     }
 
-    co.instructions = try instructions.toOwnedSlice();
+    co.instructions = instructions;
     co.index = 0;
 }
 

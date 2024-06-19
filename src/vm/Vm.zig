@@ -51,6 +51,7 @@ crash_info: crash_report.VmContext,
 
 builtin_mods: std.StringHashMapUnmanaged(Object.Payload.Module) = .{},
 
+/// Takes ownership of `co`.
 pub fn init(allocator: Allocator, name: [:0]const u8, co: CodeObject) !Vm {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
@@ -96,7 +97,6 @@ pub fn run(
     assert(vm.scopes.items.len == 0); // global scope must be the first
     try vm.scopes.append(vm.allocator, global_scope);
 
-    // Generate instruction wrapper.
     try vm.co.process(vm.allocator);
 
     // Add the builtin functions to the scope.
@@ -133,11 +133,12 @@ pub fn run(
 }
 
 pub fn deinit(vm: *Vm) void {
-    for (vm.scopes.items) |scope| {
+    for (vm.scopes.items) |*scope| {
         var val_iter = scope.valueIterator();
         while (val_iter.next()) |val| {
             val.deinit(vm.allocator);
         }
+        scope.deinit(vm.allocator);
     }
     vm.scopes.deinit(vm.allocator);
 
@@ -156,6 +157,8 @@ pub fn deinit(vm: *Vm) void {
         mod.deinit(vm.allocator);
     }
     vm.builtin_mods.deinit(vm.allocator);
+
+    vm.co.deinit(vm.allocator);
     vm.* = undefined;
 }
 
@@ -172,6 +175,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .LOAD_ATTR => try vm.execLoadAttr(inst),
 
         .BUILD_LIST => try vm.execBuildList(inst),
+        .BUILD_TUPLE => try vm.execBuildTuple(inst),
         .BUILD_SET => try vm.execBuildSet(inst),
 
         .STORE_NAME => try vm.execStoreName(inst),
@@ -184,6 +188,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 
         .ROT_TWO => try vm.execRotTwo(),
 
+        .NOP => {},
+
         .POP_TOP => try vm.execPopTop(),
         .POP_JUMP_IF_TRUE => try vm.execPopJump(inst, true),
         .POP_JUMP_IF_FALSE => try vm.execPopJump(inst, false),
@@ -191,6 +197,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .INPLACE_ADD, .BINARY_ADD => try vm.execBinaryOperation(.add),
         .INPLACE_SUBTRACT, .BINARY_SUBTRACT => try vm.execBinaryOperation(.sub),
         .INPLACE_MULTIPLY, .BINARY_MULTIPLY => try vm.execBinaryOperation(.mul),
+        .BINARY_SUBSCR => try vm.execBinarySubscr(),
 
         .COMPARE_OP => try vm.execCompareOperation(inst),
 
@@ -204,6 +211,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 
         .IMPORT_NAME => try vm.execImportName(inst),
         .IMPORT_FROM => try vm.execImportFrom(inst),
+
+        .JUMP_ABSOLUTE => vm.co.index = inst.extra,
 
         else => std.debug.panic("TODO: {s}", .{@tagName(inst.op)}),
     }
@@ -261,12 +270,14 @@ fn execLoadAttr(vm: *Vm, inst: Instruction) !void {
 
 fn execStoreName(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
-    const tos = vm.stack.pop();
+    // NOTE: STORE_NAME does NOT pop the stack, it only stores the TOS.
+    const tos = vm.stack.items[vm.stack.items.len - 1];
     try vm.scopes.items[vm.depth].put(vm.allocator, name, tos);
 }
 
 fn execReturnValue(vm: *Vm) !void {
     if (vm.depth == 0) {
+        _ = vm.stack.pop();
         vm.is_running = false;
         return;
     }
@@ -278,29 +289,40 @@ fn execReturnValue(vm: *Vm) !void {
 
 fn execBuildList(vm: *Vm, inst: Instruction) !void {
     const count = inst.extra;
+    const objects = try vm.popNObjects(count);
+    var list: Object.Payload.List.HashMap = .{};
 
-    if (count == 0) return;
-    _ = vm;
+    try list.appendSlice(vm.allocator, objects);
 
-    @panic("TODO: execBuildList count != 0");
+    const val = try vm.createObject(.list, .{ .list = list });
+    try vm.stack.append(vm.allocator, val);
+}
+
+fn execBuildTuple(vm: *Vm, inst: Instruction) !void {
+    const count = inst.extra;
+    const objects = try vm.popNObjects(count);
+    const val = try vm.createObject(.tuple, objects);
+    try vm.stack.append(vm.allocator, val);
 }
 
 fn execBuildSet(vm: *Vm, inst: Instruction) !void {
     const objects = try vm.popNObjects(inst.extra);
-    var list: Object.Payload.Set.HashMap = .{};
+    var set: Object.Payload.Set.HashMap = .{};
 
     for (objects) |object| {
-        try list.put(vm.allocator, object, {});
+        try set.put(vm.allocator, object, {});
     }
 
-    const val = try vm.createObject(.set, .{ .set = list, .frozen = false });
+    const val = try vm.createObject(.set, .{ .set = set, .frozen = false });
     try vm.stack.append(vm.allocator, val);
 }
 
 fn execCallFunction(vm: *Vm, inst: Instruction) !void {
     const args = try vm.popNObjects(inst.extra);
+    defer vm.allocator.free(args);
 
-    const func_object = vm.stack.pop();
+    var func_object = vm.stack.pop();
+
     switch (func_object.tag) {
         .zig_function => {
             const func_ptr = func_object.get(.zig_function);
@@ -308,22 +330,17 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
         },
         .function => {
             const func = func_object.get(.function);
-            try func.co.process(vm.allocator);
 
             // we don't allow for recursive function calls yet
             const current_hash = vm.co.hash();
             const new_hash = func.co.hash();
             if (current_hash == new_hash) @panic("no recursive function calls yet");
 
-            // derefs are here to make sure we save by-val
             try vm.co_stack.append(vm.allocator, vm.co);
             vm.setNewCo(func.co);
-
-            // Set the args.
             for (args, 0..) |arg, i| {
                 vm.co.varnames[i] = arg;
             }
-
             vm.depth += 1;
         },
         else => unreachable,
@@ -391,6 +408,31 @@ fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
 
     const result_val = try vm.createObject(.int, result);
     try vm.stack.append(vm.allocator, result_val);
+}
+
+fn execBinarySubscr(vm: *Vm) !void {
+    const tos = vm.stack.pop();
+    const list_obj = vm.stack.pop();
+
+    assert(tos.tag == .int);
+    const index_obj = tos.get(.int);
+    // can go usize both ways
+    const index = try index_obj.to(i128);
+
+    switch (list_obj.tag) {
+        .list => {
+            const list_val = list_obj.get(.list);
+
+            const val: Object = if (index < 0) val: {
+                const length = list_val.list.items.len;
+                const true_index: usize = @intCast(length - @abs(index));
+                break :val list_val.list.items[true_index];
+            } else list_val.list.items[@intCast(index)];
+
+            try vm.stack.append(vm.allocator, val);
+        },
+        else => std.debug.panic("TODO: execBinarySubscr {s}", .{@tagName(list_obj.tag)}),
+    }
 }
 
 fn execCompareOperation(vm: *Vm, inst: Instruction) !void {
@@ -487,20 +529,28 @@ fn execPopJump(vm: *Vm, inst: Instruction, case: bool) !void {
 }
 
 fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
-    if (inst.extra != 0x00) @panic("Don't support function flags yet");
+    const arg_ty: Object.Payload.PythonFunction.ArgType = @enumFromInt(inst.extra);
 
     const name_object = vm.stack.pop();
     const co_object = vm.stack.pop();
+
+    const extra = switch (arg_ty) {
+        .none => null,
+        .string_tuple => vm.stack.pop(),
+        else => std.debug.panic("TODO: execMakeFunction {s}", .{@tagName(arg_ty)}),
+    };
+    _ = extra;
 
     assert(name_object.tag == .string);
     assert(co_object.tag == .codeobject);
 
     const name = name_object.get(.string);
-    const co = co_object.get(.codeobject).*;
+    var co = co_object.get(.codeobject);
+    try co.process(vm.allocator);
 
     const function = try vm.createObject(.function, .{
-        .name = name,
-        .co = co,
+        .name = try vm.allocator.dupe(u8, name),
+        .co = try co.clone(vm.allocator),
     });
 
     try vm.stack.append(vm.allocator, function);
@@ -549,14 +599,20 @@ fn execImportName(vm: *Vm, inst: Instruction) !void {
 }
 
 fn execImportFrom(vm: *Vm, inst: Instruction) !void {
-    const attr_name = vm.co.getName(inst.extra);
+    const names = vm.co.names.get(.tuple);
+    const attr_name = names[inst.extra];
 
-    _ = attr_name;
+    const mod = vm.stack.pop();
+
+    const getattr_fn = builtins.getBuiltin("getattr");
+    try @call(.auto, getattr_fn, .{ vm, &.{ mod, attr_name }, null });
 }
 
 // Helpers
 
 /// Pops `n` items off the stack in reverse order and returns them.
+///
+/// Caller owns the slice.
 fn popNObjects(vm: *Vm, n: usize) ![]Object {
     const objects = try vm.allocator.alloc(Object, n);
 

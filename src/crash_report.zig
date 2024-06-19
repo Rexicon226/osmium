@@ -119,10 +119,16 @@ pub fn prepVmContext(current_co: CodeObject) VmContext {
     } else .{};
 }
 
+var buffer: [10 * 1024]u8 = undefined;
+
 fn dumpStatusReport() !void {
+    var fba = std.heap.FixedBufferAllocator.init(&buffer);
+    const allocator = fba.allocator();
     const state = vm_state orelse return;
     const stderr = io.getStdErr().writer();
-    const current_co = state.current_co;
+
+    var current_co = state.current_co;
+    try current_co.process(allocator);
 
     try print_co.print_co(stderr, .{
         .co = current_co,

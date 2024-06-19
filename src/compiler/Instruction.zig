@@ -3,6 +3,7 @@
 const Instruction = @This();
 const std = @import("std");
 const CodeObject = @import("CodeObject.zig");
+const Object = @import("../vm/Object.zig");
 
 op: OpCode,
 extra: u8,
@@ -59,6 +60,13 @@ fn format2(
         => try writer.print("{d} ({s})", .{ extra, co.getName(extra) }),
         .CALL_FUNCTION,
         => try writer.print("{d}", .{extra}),
+        .MAKE_FUNCTION,
+        => {
+            const ty: Object.Payload.PythonFunction.ArgType = @enumFromInt(extra);
+            try writer.print("{s}", .{@tagName(ty)});
+        },
+        .BUILD_TUPLE,
+        => try writer.print("({d})", .{extra}),
         else => try writer.print("TODO payload {d}", .{extra}),
     }
 }

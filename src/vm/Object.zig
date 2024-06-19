@@ -3,7 +3,7 @@ const Object = @This();
 const std = @import("std");
 const Vm = @import("Vm.zig");
 const builtins = @import("builtins.zig");
-const Co = @import("../compiler/CodeObject.zig");
+const CodeObject = @import("../compiler/CodeObject.zig");
 
 const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
@@ -16,6 +16,8 @@ const log = std.log.scoped(.object);
 
 tag: Tag,
 payload: PayloadTy,
+// A unique ID each object has
+id: u32,
 
 const PayloadTy = union {
     single: *anyopaque,
@@ -61,7 +63,7 @@ pub const Tag = enum(usize) {
             .set => Payload.Set,
 
             .zig_function => Payload.ZigFunc,
-            .codeobject => Co,
+            .codeobject => CodeObject,
             .function => Payload.PythonFunction,
 
             .module => Payload.Module,
@@ -122,33 +124,47 @@ fn isInlinePtr(ty: type) bool {
     return false;
 }
 
+var global_id: u32 = 0;
+pub var alive_map: std.AutoArrayHashMapUnmanaged(u32, bool) = .{};
+
 pub fn create(comptime t: Tag, allocator: Allocator, data: Data(t)) error{OutOfMemory}!Object {
     assert(@intFromEnum(t) >= Tag.first_payload);
 
+    const new_id = global_id;
+    global_id += 1;
+    try alive_map.put(allocator, new_id, true);
+
     switch (t) {
         .string, .tuple => {
-            const ptr = try t.allocate(allocator, data.len);
-            @memcpy(ptr, data);
             var payload_ptr: []void = undefined;
             payload_ptr.len = data.len;
-            payload_ptr.ptr = @ptrCast(ptr.ptr);
-            return .{ .tag = t, .payload = .{ .double = payload_ptr } };
+            payload_ptr.ptr = @ptrCast(data.ptr);
+            return .{ .tag = t, .payload = .{ .double = payload_ptr }, .id = new_id };
         },
         else => {
             const ptr = try t.allocate(allocator, null);
             ptr.* = data;
-            return .{ .tag = t, .payload = .{ .single = @ptrCast(ptr) } };
+            return .{ .tag = t, .payload = .{ .single = @ptrCast(ptr) }, .id = new_id };
         },
     }
 }
 
 pub fn init(comptime t: Tag) Object {
     assert(@intFromEnum(t) < Tag.first_payload);
-    return .{ .tag = t, .payload = undefined };
+    defer global_id += 1;
+    return .{ .tag = t, .payload = undefined, .id = global_id };
 }
 
-pub fn clone(object: *const Object, allocator: Allocator) !Object {
-    assert(@intFromEnum(object.tag) >= Tag.first_payload);
+const CloneError = error{OutOfMemory};
+
+pub fn clone(object: *const Object, allocator: Allocator) CloneError!Object {
+    if (@intFromEnum(object.tag) < Tag.first_payload) {
+        return object.*; // nothing deeper to clone
+    }
+
+    const new_id = global_id;
+    global_id += 1;
+    try alive_map.put(allocator, new_id, true);
 
     const ptr: PayloadTy = switch (object.tag) {
         .none => unreachable,
@@ -159,7 +175,14 @@ pub fn clone(object: *const Object, allocator: Allocator) !Object {
             const old_mem = object.get(t);
             const new_ptr = try t.allocate(allocator, old_mem.len);
 
-            @memcpy(new_ptr, old_mem);
+            if (t == .tuple) {
+                for (new_ptr, old_mem) |*dst, src| {
+                    dst.* = try src.clone(allocator);
+                }
+            } else {
+                @memcpy(new_ptr, old_mem);
+            }
+
             var payload_ptr: []void = undefined;
             payload_ptr.len = old_mem.len;
             payload_ptr.ptr = @ptrCast(new_ptr.ptr);
@@ -172,6 +195,19 @@ pub fn clone(object: *const Object, allocator: Allocator) !Object {
             new_ptr.* = new_int;
             break :blk .{ .single = @ptrCast(new_ptr) };
         },
+        inline .function => |t| blk: {
+            const old_function = object.get(.function);
+            const new_ptr = try t.allocate(allocator, null);
+            new_ptr.name = try allocator.dupe(u8, old_function.name);
+            new_ptr.co = try old_function.co.clone(allocator);
+            break :blk .{ .single = @ptrCast(new_ptr) };
+        },
+        inline .codeobject => |t| blk: {
+            const old_co = object.get(.codeobject);
+            const new_ptr = try t.allocate(allocator, null);
+            new_ptr.* = try old_co.clone(allocator);
+            break :blk .{ .single = @ptrCast(new_ptr) };
+        },
         inline else => |tag| blk: {
             const new_ptr = try allocator.create(Data(tag));
             const old_ptr = object.get(tag);
@@ -179,22 +215,17 @@ pub fn clone(object: *const Object, allocator: Allocator) !Object {
             break :blk .{ .single = @ptrCast(new_ptr) };
         },
     };
-    return .{ .tag = object.tag, .payload = ptr };
+    return .{ .tag = object.tag, .payload = ptr, .id = new_id };
 }
 
+// Deallocates the payload, but keeps the
 pub fn deinit(object: *Object, allocator: Allocator) void {
     const t = object.tag;
     if (@intFromEnum(t) < Tag.first_payload) return; // nothing to free
 
-    const size: usize = switch (t) {
-        .none => unreachable,
-        .float => unreachable,
-        .bool_true => unreachable,
-        .bool_false => unreachable,
-        inline else => |tag| @sizeOf(Data(tag)),
-    };
+    const liveness = alive_map.get(object.id) orelse @panic("deinit ID not found");
+    if (!liveness) return; // this payload isn't alive anymore
 
-    // if it has a .deinit decl, we call that
     switch (t) {
         .none => unreachable,
         .float => unreachable,
@@ -212,24 +243,27 @@ pub fn deinit(object: *Object, allocator: Allocator) void {
             allocator.free(string);
         },
         inline else => |tag| {
+            // if it has a .deinit decl, we call that
             const data_ty = Data(tag);
             switch (@typeInfo(data_ty)) {
                 .Struct, .Enum, .Union => {
                     const payload = object.get(tag);
                     const arg_count = @typeInfo(@TypeOf(data_ty.deinit)).Fn.params.len;
-                    if (comptime arg_count == 1) payload.deinit() else payload.deinit(allocator);
+                    if (comptime arg_count == 1) {
+                        payload.deinit();
+                    } else payload.deinit(allocator);
                 },
                 else => {},
             }
 
-            // for inline types, a general free
             allocator.free(@as(
-                [*]align(@alignOf(data_ty)) const u8,
+                [*]align(@alignOf(data_ty)) u8,
                 @alignCast(@ptrCast(object.payload.single)),
-            )[0..size]);
+            )[0..@sizeOf(data_ty)]);
         },
     }
 
+    alive_map.getEntry(object.id).?.value_ptr.* = false;
     object.* = undefined;
 }
 
@@ -243,24 +277,6 @@ pub fn get(object: *const Object, comptime t: Tag) PtrData(t) {
         return many[0..object.payload.double.len];
     } else {
         return @alignCast(@ptrCast(object.payload.single));
-    }
-}
-
-/// Copies the payload to new memory, frees the object.
-pub fn getOwnedPayload(object: *Object, comptime t: Tag, allocator: Allocator) !PtrData(t) {
-    defer object.deinit(allocator);
-    switch (t) {
-        .string, .tuple => {
-            const old_mem = object.get(t);
-            const new_ptr = try t.allocate(allocator, old_mem.len);
-            @memcpy(new_ptr, old_mem);
-            return new_ptr;
-        },
-        else => {
-            const new_ptr = try t.allocate(allocator, null);
-            new_ptr.* = object.get(t).*;
-            return new_ptr;
-        },
     }
 }
 
@@ -299,7 +315,7 @@ pub const Payload = union(enum) {
     tuple: Tuple,
     set: Set,
     list: List,
-    codeobject: Co,
+    codeobject: CodeObject,
     function: PythonFunction,
 
     pub const Int = BigIntManaged;
@@ -315,7 +331,9 @@ pub const Payload = union(enum) {
     pub const Tuple = []Object;
 
     pub const List = struct {
-        list: std.ArrayListUnmanaged(Object),
+        list: HashMap,
+
+        pub const HashMap = std.ArrayListUnmanaged(Object);
 
         pub const MemberFns: MemberFuncTy = &.{
             .{ .name = "append", .func = append },
@@ -343,7 +361,15 @@ pub const Payload = union(enum) {
 
     pub const PythonFunction = struct {
         name: []const u8,
-        co: Co,
+        co: CodeObject,
+
+        pub const ArgType = enum(u8) {
+            none = 0x00,
+            tuple = 0x01,
+            dict = 0x02,
+            string_tuple = 0x04,
+            closure = 0x08,
+        };
 
         pub fn deinit(func: *PythonFunction, allocator: std.mem.Allocator) void {
             func.co.deinit(allocator);
@@ -403,6 +429,8 @@ pub const Payload = union(enum) {
             set.* = undefined;
         }
     };
+
+    pub const Ref = Object;
 
     pub const Module = struct {
         name: []const u8,
@@ -495,6 +523,17 @@ pub fn format(
             const function = object.get(.zig_function);
             try writer.print("<zig_function @ 0x{d}>", .{@intFromPtr(function)});
         },
+        .function => {
+            const function = object.get(.function);
+            try writer.print("<function {s} at 0x{d}>", .{
+                function.name,
+                @intFromPtr(&function.co),
+            });
+        },
+        // .codeobject => {
+        //     const co = object.get(.codeobject);
+        //     try writer.print("{}", .{co.*});
+        // },
 
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
     }
