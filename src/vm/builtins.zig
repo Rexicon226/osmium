@@ -15,7 +15,6 @@ const BigIntManaged = std.math.big.int.Managed;
 const log = std.log.scoped(.builtins);
 
 const Vm = @import("Vm.zig");
-const fatal = @import("panic.zig").fatal;
 const assert = std.debug.assert;
 
 pub const KW_Type = std.StringHashMap(Object);
@@ -51,12 +50,12 @@ pub fn getBuiltin(name: []const u8) *const func_proto {
 }
 
 fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
-    if (null != kw) fatal("abs() has no kw args", .{});
+    if (null != kw) vm.fail("abs() has no kw args", .{});
 
     const t = tracer.trace(@src(), "builtin-abs", .{});
     defer t.end();
 
-    if (args.len != 1) fatal("abs() takes exactly one argument ({d} given)", .{args.len});
+    if (args.len != 1) vm.fail("abs() takes exactly one argument ({d} given)", .{args.len});
 
     const arg = args[0];
 
@@ -68,7 +67,7 @@ fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
                 const abs_val = try vm.createObject(.int, integer);
                 break :value abs_val;
             },
-            else => fatal("cannot abs() on type: {s}", .{@tagName(arg.tag)}),
+            else => vm.fail("cannot abs() on type: {s}", .{@tagName(arg.tag)}),
         }
     };
 
@@ -89,7 +88,7 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
                 const maybe_sep_override = kw.get("sep");
 
                 if (maybe_sep_override) |sep| {
-                    if (sep.tag != .string) fatal("print(sep=) must be a string type", .{});
+                    if (sep.tag != .string) vm.fail("print(sep=) must be a string type", .{});
                     const payload = sep.get(.string);
                     break :sep payload;
                 }
@@ -106,7 +105,7 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
             const maybe_print_override = kw.get("end");
 
             if (maybe_print_override) |print_override| {
-                if (print_override.tag != .string) fatal("print(end=) must be a string type", .{});
+                if (print_override.tag != .string) vm.fail("print(end=) must be a string type", .{});
                 const payload = print_override.get(.string);
                 break :end_print payload;
             }
@@ -121,8 +120,8 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
 }
 
 fn input(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
-    if (args.len > 1) fatal("input() takes at most 1 argument ({d} given)", .{args.len});
-    if (null != maybe_kw) fatal("input() takes no positional arguments", .{});
+    if (args.len > 1) vm.fail("input() takes at most 1 argument ({d} given)", .{args.len});
+    if (null != maybe_kw) vm.fail("input() takes no positional arguments", .{});
 
     if (args.len == 1) {
         const prompt = args[0];
@@ -143,8 +142,8 @@ fn input(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
 }
 
 fn int(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
-    if (args.len != 1) fatal("int() takes exactly 1 argument ({d} given)", .{args.len});
-    if (null != maybe_kw) fatal("int() takes no positional arguments", .{});
+    if (args.len != 1) vm.fail("int() takes exactly 1 argument ({d} given)", .{args.len});
+    if (null != maybe_kw) vm.fail("int() takes no positional arguments", .{});
 
     const in = args[0];
     const result: Object = switch (in.tag) {
@@ -156,7 +155,7 @@ fn int(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
             const new_obj = try vm.createObject(.int, new_int);
             break :blk new_obj;
         },
-        else => |tag| fatal("TODO: int() {s}", .{@tagName(tag)}),
+        else => |tag| vm.fail("TODO: int() {s}", .{@tagName(tag)}),
     };
 
     try vm.stack.append(vm.allocator, result);
@@ -164,7 +163,7 @@ fn int(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
 
 fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     assert(maybe_kw == null);
-    if (args.len != 2) fatal("getattr() takes exactly two arguments ({d} given)", .{args.len});
+    if (args.len != 2) vm.fail("getattr() takes exactly two arguments ({d} given)", .{args.len});
 
     const obj = args[0];
     const name_obj = args[1];
@@ -173,7 +172,7 @@ fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void 
 
     const dict: std.StringHashMapUnmanaged(Object) = switch (obj.tag) {
         .module => obj.get(.module).dict,
-        else => fatal("getattr(), type {s} doesn't have any attributes", .{@tagName(obj.tag)}),
+        else => vm.fail("getattr(), type {s} doesn't have any attributes", .{@tagName(obj.tag)}),
     };
 
     const attr_obj = dict.get(name_string) orelse {
@@ -182,7 +181,7 @@ fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void 
             std.debug.print("{s} : {}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
         }
 
-        fatal("object {} doesn't have an attribute named {s}", .{ obj, name_string });
+        vm.fail("object {} doesn't have an attribute named {s}", .{ obj, name_string });
     };
 
     try vm.stack.append(vm.allocator, attr_obj);
@@ -190,7 +189,7 @@ fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void 
 
 fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
     writer.print(fmt, args) catch |err| {
-        fatal("error: {s}", .{@errorName(err)});
+        std.debug.panic("error: {s}", .{@errorName(err)});
     };
 }
 
@@ -199,10 +198,9 @@ fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-bool", .{});
     defer t.end();
 
-    if (null != kw) fatal("bool() has no kw args", .{});
-
-    if (args.len > 1) fatal("bool() takes at most 1 arguments ({d} given)", .{args.len});
-    if (args.len == 0) fatal("bool() takes 1 argument, 0 given", .{});
+    if (null != kw) vm.fail("bool() has no kw args", .{});
+    if (args.len > 1) vm.fail("bool() takes at most 1 arguments ({d} given)", .{args.len});
+    if (args.len == 0) vm.fail("bool() takes 1 argument, 0 given", .{});
 
     const arg = args[0];
 
@@ -223,7 +221,7 @@ fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
             if (string.len == 0) break :string false;
             break :string true;
         },
-        else => fatal("bool() cannot take in type: {s}", .{@tagName(arg.tag)}),
+        else => vm.fail("bool() cannot take in type: {s}", .{@tagName(arg.tag)}),
     };
 
     const val = if (value)
@@ -234,7 +232,8 @@ fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
 }
 
 fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
-    if (args.len != 1) fatal("__import__() takes exactly 1 arguments ({d} given)", .{args.len});
+    if (args.len != 1) vm.fail("__import__() takes exactly 1 arguments ({d} given)", .{args.len});
+
     const mod_name_obj = args[0];
     assert(mod_name_obj.tag == .string);
     const mod_name = mod_name_obj.get(.string);
@@ -264,7 +263,7 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
         }, 0);
 
         // parse the file
-        const source_file = std.fs.cwd().openFile(potential_name, .{ .lock = .exclusive }) catch |err| {
+        const source_file = std.fs.cwd().openFile(potential_name, .{}) catch |err| {
             switch (err) {
                 error.FileNotFound => @panic("invalid file provided"),
                 else => |e| return e,
@@ -336,21 +335,11 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
             }
         }
 
-        var iter_ = global_scope.iterator();
-        while (iter_.next()) |entry| {
-            log.debug("BEFORE: {s}: {}", .{ entry.key_ptr.*, entry.value_ptr.* });
-        }
-
         break :file .{
             .name = mod_name,
             .dict = global_scope,
         };
     };
-
-    var iter = loaded_mod.dict.iterator();
-    while (iter.next()) |entry| {
-        log.debug("AFTER: {s}: {}", .{ entry.key_ptr.*, entry.value_ptr.* });
-    }
 
     const new_mod = try vm.createObject(
         .module,

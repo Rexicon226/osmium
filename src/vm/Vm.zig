@@ -15,6 +15,12 @@ const Instruction = @import("../compiler/Instruction.zig");
 const Marshal = @import("../compiler/Marshal.zig");
 const crash_report = @import("../crash_report.zig");
 
+const errors = @import("errors.zig");
+const ReportItem = errors.ReportItem;
+const Reference = errors.Reference;
+const Report = errors.Report;
+const ReportKind = errors.ReportKind;
+
 const Object = @import("Object.zig");
 const Vm = @This();
 
@@ -178,6 +184,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .BUILD_TUPLE => try vm.execBuildTuple(inst),
         .BUILD_SET => try vm.execBuildSet(inst),
 
+        .LIST_EXTEND => try vm.execListExtend(inst),
+
         .STORE_NAME => try vm.execStoreName(inst),
         .STORE_SUBSCR => try vm.execStoreSubScr(),
         .STORE_FAST => try vm.execStoreFast(inst),
@@ -227,7 +235,7 @@ fn execLoadConst(vm: *Vm, inst: Instruction) !void {
 fn execLoadName(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
     const val = vm.lookUpwards(name) orelse
-        std.debug.panic("couldn't find '{s}'", .{name});
+        vm.fail("couldn't find '{s}'", .{name});
     try vm.stack.append(vm.allocator, val);
 }
 
@@ -236,10 +244,9 @@ fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
 
     const tos = vm.stack.pop();
 
-    const func = try tos.getMemberFunction(name, vm.allocator) orelse std.debug.panic(
-        "couldn't find '{s}.{s}'",
-        .{ @tagName(tos.tag), name },
-    );
+    const func = try tos.getMemberFunction(name, vm.allocator) orelse {
+        vm.fail("couldn't find '{s}.{s}'", .{ @tagName(tos.tag), name });
+    };
 
     try vm.stack.append(vm.allocator, func);
     try vm.stack.append(vm.allocator, tos);
@@ -248,7 +255,7 @@ fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
 fn execLoadGlobal(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
     const val = vm.scopes.items[0].get(name) orelse
-        std.debug.panic("couldn't find '{s}' on the global scope", .{name});
+        vm.fail("couldn't find '{s}' on the global scope", .{name});
     try vm.stack.append(vm.allocator, val);
 }
 
@@ -317,6 +324,27 @@ fn execBuildSet(vm: *Vm, inst: Instruction) !void {
     try vm.stack.append(vm.allocator, val);
 }
 
+fn execListExtend(vm: *Vm, inst: Instruction) !void {
+    _ = inst;
+
+    const tos = vm.stack.pop();
+    const list = vm.stack.pop();
+
+    assert(list.tag == .list);
+    assert(tos.tag == .list or tos.tag == .tuple);
+
+    const list_ptr = list.get(.list);
+
+    switch (tos.tag) {
+        .tuple => {
+            const tuple = tos.get(.tuple);
+            try list_ptr.list.appendSlice(vm.allocator, tuple);
+        },
+        .list => @panic("TODO: execListExtend list"),
+        else => unreachable,
+    }
+}
+
 fn execCallFunction(vm: *Vm, inst: Instruction) !void {
     const args = try vm.popNObjects(inst.extra);
     defer vm.allocator.free(args);
@@ -334,7 +362,7 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
             // we don't allow for recursive function calls yet
             const current_hash = vm.co.hash();
             const new_hash = func.co.hash();
-            if (current_hash == new_hash) @panic("no recursive function calls yet");
+            if (current_hash == new_hash) vm.fail("recusrive function calls aren't allowed (yet)", .{});
 
             try vm.co_stack.append(vm.allocator, vm.co);
             vm.setNewCo(func.co);
@@ -349,10 +377,7 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
 
 fn execCallFunctionKW(vm: *Vm, inst: Instruction) !void {
     const kw_tuple = vm.stack.pop();
-    const kw_tuple_slice = if (kw_tuple.tag == .tuple)
-        kw_tuple.get(.tuple)
-    else
-        @panic("execCallFunctionKW tos tuple not tuple");
+    const kw_tuple_slice = kw_tuple.get(.tuple);
     const tuple_len = kw_tuple_slice.len;
 
     var kw_args = builtins.KW_Type.init(vm.allocator);
@@ -423,11 +448,17 @@ fn execBinarySubscr(vm: *Vm) !void {
         .list => {
             const list_val = list_obj.get(.list);
 
-            const val: Object = if (index < 0) val: {
+            const abs_index: usize = if (index < 0) val: {
                 const length = list_val.list.items.len;
                 const true_index: usize = @intCast(length - @abs(index));
-                break :val list_val.list.items[true_index];
-            } else list_val.list.items[@intCast(index)];
+                break :val true_index;
+            } else @intCast(index);
+
+            if (abs_index > list_val.list.items.len) {
+                vm.fail("list index '{d}' out of range", .{index});
+            }
+
+            const val = list_val.list.items[abs_index];
 
             try vm.stack.append(vm.allocator, val);
         },
@@ -473,14 +504,14 @@ fn execStoreSubScr(vm: *Vm) !void {
     const value = vm.stack.pop();
 
     if (list.tag != .list) {
-        std.debug.panic(
+        vm.fail(
             "cannot perform index assignment on non-list, found '{s}'",
             .{@tagName(list.tag)},
         );
     }
 
     if (index.tag != .int) {
-        std.debug.panic(
+        vm.fail(
             "list assignment index is not an int, found '{s}'",
             .{@tagName(index.tag)},
         );
@@ -490,7 +521,7 @@ fn execStoreSubScr(vm: *Vm) !void {
     const index_int = try index.get(.int).to(i64);
 
     if (list_payload.items.len < index_int) {
-        std.debug.panic(
+        vm.fail(
             "attempting to assign to an index out of bounds, len: {d}, index {d}",
             .{ list_payload.items.len, index_int },
         );
@@ -683,4 +714,52 @@ fn setNewCo(
 ) void {
     vm.crash_info = crash_report.prepVmContext(new_co);
     vm.co = new_co;
+}
+
+pub fn fail(
+    vm: *Vm,
+    comptime fmt: []const u8,
+    args: anytype,
+) noreturn {
+    errdefer |err| std.debug.panic("failed to vm.fail: {s}", .{@errorName(err)});
+
+    var references = std.ArrayList(Reference).init(vm.allocator);
+    errdefer references.deinit();
+
+    // recurse backwards through the call stack and add
+    // a helpful message to show where it came from
+    const co_stack = vm.co_stack.items;
+    for (0..co_stack.len) |i| {
+        const index = co_stack.len - i - 1;
+        const co = co_stack[index];
+        try references.append(.{ .co = co });
+    }
+
+    var reports = std.ArrayList(ReportItem).init(vm.allocator);
+    errdefer reports.deinit();
+
+    {
+        const index: u32 = @intCast(vm.co.index);
+        const line = vm.co.addr2Line(index);
+
+        const message = try std.fmt.allocPrint(vm.allocator, fmt, args);
+        const error_report = ReportItem.init(
+            .@"error",
+            vm.co.filename,
+            message,
+            try references.toOwnedSlice(),
+            line,
+        );
+        try reports.append(error_report);
+    }
+
+    const report = Report.init(try reports.toOwnedSlice());
+
+    const stderr = std.io.getStdErr();
+    // it's important that nothing interupts this
+    try stderr.lock(.exclusive);
+    try report.printToWriter(stderr.writer());
+    stderr.unlock();
+
+    std.posix.exit(1);
 }
