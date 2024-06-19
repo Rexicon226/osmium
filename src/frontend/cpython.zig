@@ -57,6 +57,10 @@ extern fn PyMarshal_WriteObjectToString(?*anyopaque, c_int) ?*anyopaque;
 extern fn PyBytes_Size(?*anyopaque) usize;
 extern fn PyBytes_AsString(?*anyopaque) ?[*:0]u8;
 
+extern fn PyErr_Print() void;
+extern fn PyErr_Fetch(?*anyopaque, ?*anyopaque, ?*anyopaque) void;
+extern fn PyErr_NormalizeException(?*anyopaque, ?*anyopaque, ?*anyopaque) void;
+
 const Py_file_input: c_int = 257;
 const Py_MARSHAL_VERSION: c_int = 4;
 
@@ -140,4 +144,10 @@ pub fn Bytes_AsString(code: ?*anyopaque) ?[*:0]u8 {
     defer t.end();
 
     return PyBytes_AsString(code);
+}
+
+pub fn PrintError() void {
+    PyErr_Print();
+
+    // TODO: fetch and normalize here
 }

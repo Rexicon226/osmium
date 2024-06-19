@@ -24,7 +24,8 @@ pub fn parse(
 
     const compiled = cpython.CompileString(source, filename);
     if (null == compiled) {
-        return error.FailedToCompileString;
+        cpython.PrintError();
+        std.posix.exit(1);
     }
 
     const bytecode = cpython.Marshal_WriteObjectToString(compiled);
