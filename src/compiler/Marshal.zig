@@ -162,7 +162,7 @@ fn readObject(marshal: *Marshal) Error!Object {
             const index = marshal.readLong(false);
             try marshal.references.append(allocator, .{ .byte = marshal.cursor, .index = index });
             marshal.flag_refs.items[index].?.usages += 1;
-            break :ref marshal.flag_refs.items[index].?.content;
+            break :ref try marshal.flag_refs.items[index].?.content.clone(allocator);
         },
         else => std.debug.panic("TODO: marshal.readObject {s}", .{@tagName(ty)}),
     };
@@ -191,8 +191,7 @@ fn readCodeObject(marshal: *Marshal) Error!CodeObject {
         .consts = try marshal.readObject(),
         .names = try marshal.readObject(),
         .varnames = varnames: {
-            const varnames_tuple = (try marshal.readObject()).get(.tuple);
-            const varnames = try allocator.dupe(Object, varnames_tuple);
+            const varnames = (try marshal.readObject()).get(.tuple);
             break :varnames varnames;
         },
         .filename = blk: {
@@ -207,8 +206,6 @@ fn readCodeObject(marshal: *Marshal) Error!CodeObject {
         .name = try marshal.readSingleString(),
         .firstlineno = marshal.readLong(false),
     };
-
-    std.debug.print("consts: {}\n", .{result.consts});
 
     // lnotab
     var lnotab = try marshal.readObject();

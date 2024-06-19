@@ -202,6 +202,12 @@ pub fn clone(object: *const Object, allocator: Allocator) CloneError!Object {
             new_ptr.co = try old_function.co.clone(allocator);
             break :blk .{ .single = @ptrCast(new_ptr) };
         },
+        inline .codeobject => |t| blk: {
+            const old_co = object.get(.codeobject);
+            const new_ptr = try t.allocate(allocator, null);
+            new_ptr.* = try old_co.clone(allocator);
+            break :blk .{ .single = @ptrCast(new_ptr) };
+        },
         inline else => |tag| blk: {
             const new_ptr = try allocator.create(Data(tag));
             const old_ptr = object.get(tag);

@@ -170,27 +170,25 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
     const source = try source_file.readToEndAllocOptions(allocator, source_file_size, source_file_size, @alignOf(u8), 0);
     defer allocator.free(source);
 
-    // const gc_allocator = gc.allocator();
-    // gc.enable();
-    // gc.setFindLeak(build_options.enable_logging);
-    // defer gc.collect();
+    const gc_allocator = gc.allocator();
+    gc.enable();
+    gc.setFindLeak(build_options.enable_logging);
+    defer gc.collect();
 
     const pyc = try Python.parse(source, file_name, allocator);
     defer allocator.free(pyc);
 
-    var marshal = try Marshal.init(allocator, pyc);
-    defer Object.alive_map.deinit(allocator);
+    var marshal = try Marshal.init(gc_allocator, pyc);
+    defer Object.alive_map.deinit(gc_allocator);
     defer marshal.deinit();
 
-    var seed = try marshal.parse();
-    seed.deinit(allocator);
+    const seed = try marshal.parse();
+    var vm = try Vm.init(gc_allocator, file_name, seed);
+    try vm.initBuiltinMods(
+        std.fs.path.dirname(file_name) orelse
+            try std.fs.cwd().realpathAlloc(gc_allocator, "."),
+    );
 
-    // var vm = try Vm.init(allocator, file_name, seed);
-    // try vm.initBuiltinMods(
-    //     std.fs.path.dirname(file_name) orelse
-    //         try std.fs.cwd().realpathAlloc(allocator, "."),
-    // );
-
-    // try vm.run();
-    // defer vm.deinit();
+    try vm.run();
+    defer vm.deinit();
 }

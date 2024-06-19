@@ -321,7 +321,8 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
     const args = try vm.popNObjects(inst.extra);
     defer vm.allocator.free(args);
 
-    const func_object = vm.stack.pop();
+    var func_object = vm.stack.pop();
+
     switch (func_object.tag) {
         .zig_function => {
             const func_ptr = func_object.get(.zig_function);
@@ -335,15 +336,11 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
             const new_hash = func.co.hash();
             if (current_hash == new_hash) @panic("no recursive function calls yet");
 
-            // derefs are here to make sure we save by-val
             try vm.co_stack.append(vm.allocator, vm.co);
             vm.setNewCo(func.co);
-
-            // Set the args.
             for (args, 0..) |arg, i| {
                 vm.co.varnames[i] = arg;
             }
-
             vm.depth += 1;
         },
         else => unreachable,
@@ -552,8 +549,8 @@ fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
     try co.process(vm.allocator);
 
     const function = try vm.createObject(.function, .{
-        .name = name,
-        .co = co.*,
+        .name = try vm.allocator.dupe(u8, name),
+        .co = try co.clone(vm.allocator),
     });
 
     try vm.stack.append(vm.allocator, function);
