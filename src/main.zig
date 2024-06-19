@@ -184,10 +184,11 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
 
     const seed = try marshal.parse();
     var vm = try Vm.init(gc_allocator, file_name, seed);
-    try vm.initBuiltinMods(
-        std.fs.path.dirname(file_name) orelse
-            try std.fs.cwd().realpathAlloc(gc_allocator, "."),
-    );
+    {
+        var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
+        try vm.initBuiltinMods(std.fs.path.dirname(source_file_path) orelse unreachable);
+    }
 
     try vm.run();
     defer vm.deinit();
