@@ -192,4 +192,10 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
 
     try vm.run();
     defer vm.deinit();
+
+    main_log.debug("Run stats:", .{});
+    main_log.debug(
+        "GC Heap Size: {}",
+        .{std.fmt.fmtIntSizeDec(gc.getHeapSize())},
+    );
 }
