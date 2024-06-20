@@ -2,8 +2,9 @@ const Object = @This();
 
 const std = @import("std");
 const Vm = @import("Vm.zig");
-const builtins = @import("builtins.zig");
 const CodeObject = @import("../compiler/CodeObject.zig");
+
+const builtins = @import("../modules/builtins.zig");
 
 const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
@@ -202,8 +203,8 @@ pub fn clone(object: *const Object, allocator: Allocator) CloneError!Object {
             new_ptr.co = try old_function.co.clone(allocator);
             break :blk .{ .single = @ptrCast(new_ptr) };
         },
-        inline .codeobject => |t| blk: {
-            const old_co = object.get(.codeobject);
+        inline .list, .codeobject => |t| blk: {
+            const old_co = object.get(t);
             const new_ptr = try t.allocate(allocator, null);
             new_ptr.* = try old_co.clone(allocator);
             break :blk .{ .single = @ptrCast(new_ptr) };
@@ -357,6 +358,21 @@ pub const Payload = union(enum) {
             }
             list.list.deinit(allocator);
         }
+
+        pub fn clone(list: *const List, allocator: std.mem.Allocator) !List {
+            return .{
+                .list = list: {
+                    var new_list: HashMap = .{};
+                    for (list.list.items) |item| {
+                        try new_list.append(
+                            allocator,
+                            try item.clone(allocator),
+                        );
+                    }
+                    break :list new_list;
+                },
+            };
+        }
     };
 
     pub const PythonFunction = struct {
@@ -435,18 +451,40 @@ pub const Payload = union(enum) {
     pub const Module = struct {
         name: []const u8,
         file: ?[]const u8 = null,
-        dict: std.StringHashMapUnmanaged(Object) = .{},
+        dict: HashMap = .{},
+
+        pub const HashMap = std.StringArrayHashMapUnmanaged(Object);
 
         pub fn deinit(mod: *Module, allocator: std.mem.Allocator) void {
             if (mod.file) |file| allocator.free(file);
+            allocator.free(mod.name);
 
-            var val_iter = mod.dict.valueIterator();
-            while (val_iter.next()) |val| {
-                val.deinit(allocator);
+            var iter = mod.dict.iterator();
+            while (iter.next()) |entry| {
+                entry.value_ptr.deinit(allocator);
             }
 
             mod.dict.deinit(allocator);
             mod.* = undefined;
+        }
+
+        pub fn clone(mod: *const Module, allocator: std.mem.Allocator) !Module {
+            return .{
+                .name = try allocator.dupe(u8, mod.name),
+                .file = if (mod.file) |file| try allocator.dupe(u8, file) else null,
+                .dict = dict: {
+                    var new_dict: HashMap = .{};
+                    var old_iter = mod.dict.iterator();
+                    while (old_iter.next()) |entry| {
+                        try new_dict.put(
+                            allocator,
+                            try allocator.dupe(u8, entry.key_ptr.*),
+                            try entry.value_ptr.clone(allocator),
+                        );
+                    }
+                    break :dict new_dict;
+                },
+            };
         }
     };
 };
@@ -584,9 +622,10 @@ pub const Context = struct {
                 hasher.update(payload.name);
                 hasher.update(payload.file orelse "");
 
-                var iter = payload.dict.valueIterator();
+                var iter = payload.dict.iterator();
                 while (iter.next()) |entry| {
-                    hasher.update(std.mem.asBytes(&ctx.hash(entry.*)));
+                    hasher.update(entry.key_ptr.*);
+                    hasher.update(std.mem.asBytes(&ctx.hash(entry.value_ptr.*)));
                 }
             },
             .zig_function => {

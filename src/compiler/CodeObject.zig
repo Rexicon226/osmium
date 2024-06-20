@@ -177,7 +177,6 @@ pub fn unpackLnotab(
         const addr_incr, var line_incr = entry[0..2].*;
         addr += addr_incr;
         if (line_incr >= 0x80) {
-            if (true) @panic("audit this");
             line_incr -%= 255;
         }
         lineno += line_incr;

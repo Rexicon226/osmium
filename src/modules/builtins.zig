@@ -4,7 +4,9 @@
 const std = @import("std");
 const tracer = @import("tracer");
 
-const Object = @import("Object.zig");
+const Object = @import("../vm/Object.zig");
+const Module = Object.Payload.Module;
+
 const Python = @import("../frontend/Python.zig");
 const Marshal = @import("../compiler/Marshal.zig");
 
@@ -14,7 +16,7 @@ const BigIntManaged = std.math.big.int.Managed;
 
 const log = std.log.scoped(.builtins);
 
-const Vm = @import("Vm.zig");
+const Vm = @import("../vm/Vm.zig");
 const assert = std.debug.assert;
 
 pub const KW_Type = std.StringHashMap(Object);
@@ -23,14 +25,31 @@ pub const BuiltinError =
     error{OutOfMemory} ||
     std.fs.File.OpenError ||
     std.fs.File.ReadError ||
+    std.posix.RealPathError ||
     error{ StreamTooLong, EndOfStream } ||
     std.fmt.ParseIntError ||
     Python.Error;
 
 pub const func_proto = fn (*Vm, []const Object, kw: ?KW_Type) BuiltinError!void;
 
+pub fn create(allocator: std.mem.Allocator) !Module {
+    return .{
+        .name = try allocator.dupe(u8, "builtins"),
+        .file = null,
+        .dict = dict: {
+            var dict: Module.HashMap = .{};
+            inline for (builtin_fns) |entry| {
+                const name, const fn_ptr = entry;
+                const object = try Object.create(.zig_function, allocator, fn_ptr);
+                try dict.put(allocator, name, object);
+            }
+            break :dict dict;
+        },
+    };
+}
+
 /// https://docs.python.org/3.10/library/functions.html
-pub const builtin_fns = &.{
+const builtin_fns = &.{
     // // zig fmt: off
     .{ "abs", abs },
     .{ "bool", @"bool" },
@@ -39,15 +58,12 @@ pub const builtin_fns = &.{
     .{ "print", print },
     .{ "getattr", getattr },
     .{ "__import__", __import__ },
+
+    // undocumented built-in functions
+    .{ "__build_class__", __build_class__ },
+
     // // zig fmt: on
 };
-
-pub fn getBuiltin(name: []const u8) *const func_proto {
-    inline for (builtin_fns) |builtin_fn| {
-        if (std.mem.eql(u8, name, builtin_fn[0])) return builtin_fn[1];
-    }
-    std.debug.panic("getBuiltin name {s}", .{name});
-}
 
 fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     if (null != kw) vm.fail("abs() has no kw args", .{});
@@ -170,17 +186,12 @@ fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void 
     assert(name_obj.tag == .string);
     const name_string = name_obj.get(.string);
 
-    const dict: std.StringHashMapUnmanaged(Object) = switch (obj.tag) {
+    const dict = switch (obj.tag) {
         .module => obj.get(.module).dict,
         else => vm.fail("getattr(), type {s} doesn't have any attributes", .{@tagName(obj.tag)}),
     };
 
     const attr_obj = dict.get(name_string) orelse {
-        var iter = dict.iterator();
-        while (iter.next()) |entry| {
-            std.debug.print("{s} : {}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
-        }
-
         vm.fail("object {} doesn't have an attribute named {s}", .{ obj, name_string });
     };
 
@@ -247,28 +258,46 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
 
         // load sys.path to get a list of directories to search
         const sys_mod = vm.builtin_mods.get("sys") orelse @panic("didn't init builtin-modules");
-        const sys_path_obj = sys_mod.dict.get("path") orelse @panic("didn't init sys module correctly");
-        assert(sys_path_obj.tag == .list);
+        const list_obj = sys_mod.dict.get("path") orelse @panic("didn't init sys module correctly");
+        assert(list_obj.tag == .list);
 
-        const sys_path_list = sys_path_obj.get(.list).list;
-        const sys_path_one = sys_path_list.items[0].get(.string);
+        // we need to find the source file that the import is refering to.
+        // there is a specific order to do this in, starting with the directory
+        // that the file importing is in.
 
-        // just search for relative single file modules,
-        // such as sys_path + mod_name + .py
-        const potential_name = try std.mem.concatWithSentinel(vm.allocator, u8, &.{
-            sys_path_one,
-            &.{std.fs.path.sep},
-            mod_name,
-            ".py",
-        }, 0);
+        // it's important that we avoid a TOCTTOU attack, so our check if the file exists
+        // is the opening of it.
 
-        // parse the file
-        const source_file = std.fs.cwd().openFile(potential_name, .{}) catch |err| {
-            switch (err) {
-                error.FileNotFound => @panic("invalid file provided"),
-                else => |e| return e,
+        const mod_name_ext = try std.mem.concat(vm.allocator, u8, &.{ mod_name, ".py" });
+
+        const sys_path_list = list_obj.get(.list).list;
+        const source_file: std.fs.File = path: {
+            // check around the file it's being imported from
+            not: {
+                for (sys_path_list.items) |sys_path_obj| {
+                    const sys_path = sys_path_obj.get(.string);
+                    const potential_path = try std.fs.path.join(vm.allocator, &.{ sys_path, mod_name_ext });
+                    const file = std.fs.openFileAbsolute(potential_path, .{}) catch |err| {
+                        switch (err) {
+                            error.FileNotFound => break :not,
+                            else => |e| return e,
+                        }
+                    };
+                    break :path file;
+                }
+
+                break :not;
             }
+
+            return vm.fail("no file called '{s}' found", .{mod_name_ext});
         };
+
+        const absolute_path = path: {
+            var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            const path = try std.os.getFdPath(source_file.handle, &buf);
+            break :path try vm.allocator.dupeZ(u8, path);
+        };
+
         defer source_file.close();
         const source_file_size = (try source_file.stat()).size;
         const source = try source_file.readToEndAllocOptions(
@@ -279,18 +308,14 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
             0,
         );
 
-        const pyc = try Python.parse(source, potential_name, vm.allocator);
+        const pyc = try Python.parse(source, absolute_path, vm.allocator);
         var marshal = try Marshal.init(vm.allocator, pyc);
         const object = try marshal.parse();
 
         // create a new vm to evaluate the global scope of the module
-        var mod_vm = try Vm.init(vm.allocator, potential_name, object);
-        mod_vm.initBuiltinMods(std.fs.path.dirname(potential_name) orelse
-            @panic("passed in dir instead of file")) catch |err| {
-            std.debug.panic(
-                "failed to initialise built-in modules for module {s} with error {s}",
-                .{ mod_name, @errorName(err) },
-            );
+        var mod_vm = try Vm.init(vm.allocator, absolute_path, object);
+        mod_vm.initBuiltinMods(absolute_path) catch |err| {
+            return vm.fail("failed init evaulte module {s} with error {s}", .{ absolute_path, @errorName(err) });
         };
         mod_vm.run() catch |err| {
             std.debug.panic(
@@ -302,7 +327,7 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
         assert(mod_vm.is_running == false);
 
         const mod_scope = mod_vm.scopes.items[0];
-        var global_scope: std.StringHashMapUnmanaged(Object) = .{};
+        var global_scope: Object.Payload.Module.HashMap = .{};
 
         const fromlist: ?Object = if (maybe_kw) |kw| kw.get("fromlist") else null;
 
@@ -310,9 +335,10 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
         while (iter.next()) |entry| {
             const name: []const u8 = entry.key_ptr.*;
 
-            // the goal of the fromlist is to only append entries that exist both in the list
+            // the goal of the fromlist is to only append entries that exist both in the fromlist
             // and in the source module
-            if (fromlist) |list| exit: {
+            if (fromlist != null and fromlist.?.tag == .tuple) exit: {
+                const list = fromlist.?;
                 const tuple = list.get(.tuple);
                 for (tuple) |fromentry| {
                     const from_name = fromentry.get(.string);
@@ -325,7 +351,6 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
                         break :exit;
                     }
                 }
-                break :exit;
             } else {
                 try global_scope.put(
                     vm.allocator,
@@ -343,7 +368,23 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
 
     const new_mod = try vm.createObject(
         .module,
-        loaded_mod,
+        try loaded_mod.clone(vm.allocator),
     );
     try vm.stack.append(vm.allocator, new_mod);
+}
+
+fn __build_class__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+    _ = maybe_kw;
+
+    if (args.len < 2) {
+        vm.fail("__build_class__ takes at least 2 ({d} given)", .{args.len});
+    }
+
+    const func_obj = args[0];
+    const name_obj = args[1];
+
+    assert(func_obj.tag == .function);
+    assert(name_obj.tag == .string);
+
+    std.debug.panic("TODO: implement __build_class__", .{});
 }

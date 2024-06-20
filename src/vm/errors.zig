@@ -66,7 +66,7 @@ pub const ReportItem = struct {
         assert(fmt.len == 0);
 
         try writer.print(
-            "\x1b[1m{s}:{d}:{d}: \x1b[{d}m[{s}] \x1b[0m{s}\n",
+            "\x1b[1m{s}:{d}:{d}: \x1b[{d}m[{s}] \x1b[0m{s}:\n",
             .{
                 item.file_name,
                 0,
@@ -97,17 +97,19 @@ pub const ReportItem = struct {
             }
         }
 
-        try writer.writeAll("referenced by:\n");
-        for (item.references) |reference| {
-            try writer.writeAll("\t");
-            const co = reference.co;
+        if (item.references.len > 0) {
+            try writer.writeAll("referenced by:\n");
+            for (item.references) |reference| {
+                try writer.writeAll("\t");
+                const co = reference.co;
 
-            try writer.print("{s}: {s}:{d}:{d}\n", .{
-                co.name,
-                co.filename,
-                co.addr2Line(@intCast(co.index)),
-                0,
-            });
+                try writer.print("{s}: {s}:{d}:{d}\n", .{
+                    co.name,
+                    co.filename,
+                    co.addr2Line(@intCast(co.index)),
+                    0,
+                });
+            }
         }
     }
 };
