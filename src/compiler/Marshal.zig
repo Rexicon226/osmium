@@ -205,11 +205,8 @@ fn readCodeObject(marshal: *Marshal) Error!CodeObject {
         },
         .name = try marshal.readSingleString(),
         .firstlineno = marshal.readLong(false),
+        .lnotab_obj = try marshal.readObject(),
     };
-
-    // lnotab
-    var lnotab = try marshal.readObject();
-    lnotab.deinit(allocator);
 
     return result;
 }

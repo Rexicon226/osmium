@@ -17,6 +17,10 @@ filename: []const u8,
 consts: Object,
 names: Object,
 
+/// https://github.com/python/cpython/blob/3.10/Objects/lnotab_notes.txt
+lnotab_obj: Object,
+lnotab: std.AutoHashMapUnmanaged(u32, u32) = .{},
+
 argcount: u32,
 posonlyargcount: u32,
 kwonlyargcount: u32,
@@ -44,7 +48,6 @@ pub fn deinit(co: *CodeObject, allocator: std.mem.Allocator) void {
     co.names.deinit(allocator);
     // co.freevars.deinit(allocator);
     // co.cellvars.deinit(allocator);
-    // co.lnotab.deinit(allocator);
 
     for (co.varnames) |*varname| {
         varname.deinit(allocator);
@@ -54,6 +57,9 @@ pub fn deinit(co: *CodeObject, allocator: std.mem.Allocator) void {
     if (co.instructions) |insts| {
         allocator.free(insts);
     }
+
+    co.lnotab.deinit(allocator);
+    co.lnotab_obj.deinit(allocator);
 
     co.* = undefined;
 }
@@ -79,9 +85,10 @@ pub fn clone(co: *const CodeObject, allocator: std.mem.Allocator) !CodeObject {
         .names = try co.names.clone(allocator),
         // .freevars = try co.freevars.clone(allocator),
         // .cellvars = try co.cellvars.clone(allocator),
-        // .lnotab = try co.lnotab.clone(allocator),
+        .lnotab_obj = try co.lnotab_obj.clone(allocator),
 
         .instructions = if (co.instructions) |insts| try allocator.dupe(Instruction, insts) else null,
+        .lnotab = try co.lnotab.clone(allocator),
 
         .varnames = varnames: {
             const new_varnames = try allocator.alloc(Object, co.varnames.len);
@@ -152,6 +159,30 @@ pub fn process(
 
     co.instructions = instructions;
     co.index = 0;
+    try co.unpackLnotab(allocator);
+}
+
+pub fn unpackLnotab(
+    co: *CodeObject,
+    allocator: std.mem.Allocator,
+) !void {
+    const lnotab = co.lnotab_obj;
+    const array = lnotab.get(.string);
+
+    var lineno: u32 = 0;
+    var addr: u32 = 0;
+
+    var iter = std.mem.window(u8, array, 2, 2);
+    while (iter.next()) |entry| {
+        const addr_incr, var line_incr = entry[0..2].*;
+        addr += addr_incr;
+        if (line_incr >= 0x80) {
+            line_incr -%= 255;
+        }
+        lineno += line_incr;
+
+        try co.lnotab.put(allocator, addr, lineno);
+    }
 }
 
 // Helper functions
@@ -164,6 +195,26 @@ pub fn getName(co: *const CodeObject, namei: u8) []u8 {
 pub fn getConst(co: *const CodeObject, namei: u8) Object {
     const consts_tuple = co.consts.get(.tuple);
     return consts_tuple[namei];
+}
+
+/// Converts an index into this CodeObject's instructions
+/// into a line number in the file_name of the CodeObject.
+///
+/// Consider the ranges 1, 3, 8, 24 as addresses,
+/// and the relative line numbers of 0, 2, 5, 9
+///
+/// The addresses 1 and 2 will be at line 0, (3, 8] will be line 2, and so on.
+pub fn addr2Line(co: *const CodeObject, addr: u32) u32 {
+    const tab = co.lnotab;
+    var key_iter = tab.keyIterator();
+
+    var last_key: u32 = 0;
+    while (key_iter.next()) |key_ptr| {
+        const key = key_ptr.*;
+        if (addr >= last_key) last_key = key;
+    }
+
+    return co.firstlineno + tab.get(last_key).?;
 }
 
 const Sha256 = std.crypto.hash.sha2.Sha256;

@@ -121,7 +121,7 @@ pub fn prepVmContext(current_co: CodeObject) VmContext {
 
 var buffer: [10 * 1024]u8 = undefined;
 
-fn dumpStatusReport() !void {
+fn dumpObjectTrace() !void {
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
     const allocator = fba.allocator();
     const state = vm_state orelse return;
@@ -285,7 +285,7 @@ const PanicSwitch = struct {
 
         state.recover_stage = .report_stack;
 
-        dumpStatusReport() catch |err| {
+        dumpObjectTrace() catch |err| {
             stderr.print("\nIntercepted error.{} while dumping current state.  Continuing...\n", .{err}) catch {};
         };
 

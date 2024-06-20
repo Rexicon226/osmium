@@ -175,8 +175,8 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
     gc.setFindLeak(build_options.enable_logging);
     defer gc.collect();
 
-    const pyc = try Python.parse(source, file_name, allocator);
-    defer allocator.free(pyc);
+    const pyc = try Python.parse(source, file_name, gc_allocator);
+    defer gc_allocator.free(pyc);
 
     var marshal = try Marshal.init(gc_allocator, pyc);
     defer Object.alive_map.deinit(gc_allocator);
@@ -187,9 +187,15 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
     {
         var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
-        try vm.initBuiltinMods(std.fs.path.dirname(source_file_path) orelse unreachable);
+        try vm.initBuiltinMods(source_file_path);
     }
 
     try vm.run();
     defer vm.deinit();
+
+    main_log.debug("Run stats:", .{});
+    main_log.debug(
+        "GC Heap Size: {}",
+        .{std.fmt.fmtIntSizeDec(gc.getHeapSize())},
+    );
 }
