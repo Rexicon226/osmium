@@ -71,6 +71,15 @@ fn format2(
     }
 }
 
+pub fn returns(
+    inst: Instruction,
+) bool {
+    return switch (inst.op) {
+        .RETURN_VALUE => true,
+        else => false,
+    };
+}
+
 pub fn fmt(inst: Instruction, co: CodeObject) std.fmt.Formatter(format2) {
     return .{ .data = .{
         .co = co,

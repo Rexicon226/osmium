@@ -1,9 +1,10 @@
 .zig-cache/
-zig-out/
-temp/
 .vscode/
-traces/
+zig-out/
 
-# Don't want any artifacts
+graph/*
+!graph/plot.py
+
+traces/
 **/__pycache__
 demo/

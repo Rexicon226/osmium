@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const Graph = @import("graph/Graph.zig");
 const Python = @import("frontend/Python.zig");
 const Marshal = @import("compiler/Marshal.zig");
 const Vm = @import("vm/Vm.zig");
@@ -63,6 +64,10 @@ pub fn log(
     std.debug.print(prefix1 ++ prefix2 ++ format ++ "\n", args);
 }
 
+const Args = struct {
+    make_graph: bool,
+};
+
 pub fn main() !u8 {
     crash_report.initialize();
 
@@ -93,6 +98,9 @@ pub fn main() !u8 {
     defer args.deinit();
 
     var file_path: ?[:0]const u8 = null;
+    var options: Args = .{
+        .make_graph = false,
+    };
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
@@ -113,11 +121,13 @@ pub fn main() !u8 {
                 const scope = args.next() orelse fatal("--debug-log expects scope", .{});
                 try log_scopes.append(allocator, scope);
             }
+        } else if (std.mem.eql(u8, arg, "--graph")) {
+            options.make_graph = true;
         }
     }
 
     if (file_path) |path| {
-        try run_file(allocator, path);
+        try run_file(allocator, path, options);
         return 0;
     }
 
@@ -155,7 +165,11 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.posix.exit(1);
 }
 
-pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
+pub fn run_file(
+    allocator: std.mem.Allocator,
+    file_name: [:0]const u8,
+    options: Args,
+) !void {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
@@ -183,6 +197,14 @@ pub fn run_file(allocator: std.mem.Allocator, file_name: [:0]const u8) !void {
     defer marshal.deinit();
 
     const seed = try marshal.parse();
+
+    if (options.make_graph) {
+        var graph = try Graph.evaluate(allocator, seed);
+        defer graph.deinit();
+
+        try graph.dump();
+    }
+
     var vm = try Vm.init(gc_allocator, file_name, seed);
     {
         var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;

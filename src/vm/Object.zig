@@ -285,12 +285,35 @@ pub fn getMemberFunction(object: *const Object, name: []const u8, allocator: All
     const member_list: Payload.MemberFuncTy = switch (object.tag) {
         .list => Payload.List.MemberFns,
         .set => Payload.Set.MemberFns,
+        .module => blk: {
+            // we parse out all of the functions within the module.
+            var list = std.ArrayList(std.meta.Child(Payload.MemberFuncTy)).init(allocator);
+            const module = object.get(.module);
+            var iter = module.dict.iterator();
+            while (iter.next()) |entry| {
+                if (entry.value_ptr.tag == .function) {
+                    const cloned = try entry.value_ptr.clone(allocator);
+
+                    try list.append(.{
+                        .name = try allocator.dupe(u8, entry.key_ptr.*),
+                        .func = .{ .py_func = cloned.get(.function).* },
+                    });
+                }
+            }
+            break :blk try list.toOwnedSlice();
+        },
         else => std.debug.panic("{s} has no member functions", .{@tagName(object.tag)}),
     };
     for (member_list) |func| {
         if (std.mem.eql(u8, func.name, name)) {
-            const func_ptr = func.func;
-            return try Object.create(.zig_function, allocator, func_ptr);
+            switch (func.func) {
+                .zig_func => |func_ptr| {
+                    return try Object.create(.zig_function, allocator, func_ptr);
+                },
+                .py_func => |py_func| {
+                    return try Object.create(.function, allocator, py_func);
+                },
+            }
         }
     }
     return null;
@@ -309,6 +332,17 @@ pub fn callMemberFunction(
     try @call(.auto, func_ptr.*, .{ vm, self_args, kw });
 }
 
+/// The return belongs to the `object`.
+pub fn ident(object: *const Object) []const u8 {
+    switch (object.tag) {
+        .module => {
+            const mod = object.get(.module);
+            return mod.name;
+        },
+        else => return @tagName(object.tag),
+    }
+}
+
 pub const Payload = union(enum) {
     int: Int,
     string: String,
@@ -324,7 +358,7 @@ pub const Payload = union(enum) {
 
     pub const MemberFuncTy = []const struct {
         name: []const u8,
-        func: *const builtins.func_proto,
+        func: union(enum) { zig_func: ZigFunc, py_func: PythonFunction },
     };
 
     pub const ZigFunc = *const builtins.func_proto;
@@ -337,7 +371,7 @@ pub const Payload = union(enum) {
         pub const HashMap = std.ArrayListUnmanaged(Object);
 
         pub const MemberFns: MemberFuncTy = &.{
-            .{ .name = "append", .func = append },
+            .{ .name = "append", .func = .{ .zig_func = append } },
         };
 
         fn append(vm: *Vm, args: []const Object, kw: ?builtins.KW_Type) !void {
@@ -402,8 +436,8 @@ pub const Payload = union(enum) {
 
         // zig fmt: off
         pub const MemberFns: MemberFuncTy = &.{
-            .{ .name = "update", .func = update },
-            .{ .name = "add"   , .func = add    },
+            .{ .name = "update", .func = .{ .zig_func = update } },
+            .{ .name = "add"   , .func = .{ .zig_func = add    } },
         };
           // zig fmt: on
 
