@@ -4,6 +4,7 @@ zig-out/
 
 graph/*
 !graph/plot.py
+!graph/requirements.txt
 
 traces/
 **/__pycache__
