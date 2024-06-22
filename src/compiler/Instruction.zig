@@ -1,3 +1,7 @@
+// Copyright (c) 2024, David Rubin <daviru007@icloud.com>
+//
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! A thin wrapper around the 2 bytes that makeup the bytecode
 
 const Instruction = @This();

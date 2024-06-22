@@ -1,7 +1,13 @@
 .{
     .name = "osmium",
     .version = "0.1.0",
-    .paths = .{""},
+    .minimum_zig_version = "0.13.0",
+    .paths = .{
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+    },
     .dependencies = .{
         .tracer = .{
             .url = "https://github.com/Rexicon226/zig-tracer/archive/6400e066bb3849be4906f3b6e124d6c8c5a5083f.tar.gz",

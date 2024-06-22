@@ -1,3 +1,7 @@
+// Copyright (c) 2024, David Rubin <daviru007@icloud.com>
+//
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Scope References to builtin functions
 // NOTE: Builtin functions are expected to append their returns to the stack themselves.
 

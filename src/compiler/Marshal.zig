@@ -1,3 +1,7 @@
+// Copyright (c) 2024, David Rubin <daviru007@icloud.com>
+//
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Serialization of PYC files.
 
 const std = @import("std");

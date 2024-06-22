@@ -1,3 +1,7 @@
+// Copyright (c) 2024, David Rubin <daviru007@icloud.com>
+//
+// SPDX-License-Identifier: GPL-3.0-only
+
 /// Object types
 pub const ObjType = enum(u8) {
     TYPE_NULL = '0',
