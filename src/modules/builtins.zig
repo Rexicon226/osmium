@@ -49,7 +49,7 @@ pub fn create(allocator: std.mem.Allocator) !Module {
 }
 
 /// https://docs.python.org/3.10/library/functions.html
-const builtin_fns = &.{
+pub const builtin_fns = &.{
     // // zig fmt: off
     .{ "abs", abs },
     .{ "bool", @"bool" },

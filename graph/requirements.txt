@@ -1,0 +1,2 @@
+matplotlib >= 3.8.4
+networkx >= 2.8.8

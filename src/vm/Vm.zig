@@ -219,6 +219,8 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .POP_JUMP_IF_TRUE => try vm.execPopJump(inst, true),
         .POP_JUMP_IF_FALSE => try vm.execPopJump(inst, false),
 
+        .JUMP_FORWARD => try vm.execJumpForward(inst),
+
         .INPLACE_ADD, .BINARY_ADD => try vm.execBinaryOperation(.add),
         .INPLACE_SUBTRACT, .BINARY_SUBTRACT => try vm.execBinaryOperation(.sub),
         .INPLACE_MULTIPLY, .BINARY_MULTIPLY => try vm.execBinaryOperation(.mul),
@@ -253,16 +255,16 @@ fn execLoadName(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
     const val = vm.lookUpwards(name) orelse
         vm.fail("couldn't find '{s}'", .{name});
+    log.debug("load name: {}", .{val});
     try vm.stack.append(vm.allocator, val);
 }
 
 fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
-
     const tos = vm.stack.pop();
 
     const func = try tos.getMemberFunction(name, vm.allocator) orelse {
-        vm.fail("couldn't find '{s}.{s}'", .{ @tagName(tos.tag), name });
+        vm.fail("couldn't find '{s}.{s}'", .{ tos.ident(), name });
     };
 
     try vm.stack.append(vm.allocator, func);
@@ -272,8 +274,7 @@ fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
 fn execLoadGlobal(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
     const val = vm.scopes.items[0].get(name) orelse blk: {
-        // python is allowed to load builtin function using LOAD_GLOBAl
-        // as well
+        // python is allowed to load builtin function using LOAD_GLOBAl as well
         const builtin = vm.builtin_mods.get("builtins") orelse @panic("didn't init builtins");
         const print_obj = builtin.dict.get(name) orelse vm.fail("name '{s}' not defined in the global scope", .{name});
         break :blk print_obj;
@@ -356,24 +357,25 @@ fn execBuildSet(vm: *Vm, inst: Instruction) !void {
 }
 
 fn execListExtend(vm: *Vm, inst: Instruction) !void {
-    _ = inst;
-
-    const tos = vm.stack.pop();
-    const list = vm.stack.pop();
+    const additions = vm.stack.pop();
+    const list = vm.stack.getLast();
 
     assert(list.tag == .list);
-    assert(tos.tag == .list or tos.tag == .tuple);
+    assert(additions.tag == .list or additions.tag == .tuple);
 
     const list_ptr = list.get(.list);
 
-    switch (tos.tag) {
-        .tuple => {
-            const tuple = tos.get(.tuple);
-            try list_ptr.list.appendSlice(vm.allocator, tuple);
+    const index = absIndex(-@as(i16, inst.extra), list_ptr.list.items.len);
+    const new: []const Object = switch (additions.tag) {
+        .tuple => additions.get(.tuple),
+        .list => list: {
+            const additions_list = additions.get(.list);
+            break :list try vm.allocator.dupe(Object, additions_list.list.items);
         },
-        .list => @panic("TODO: execListExtend list"),
         else => unreachable,
-    }
+    };
+
+    try list_ptr.list.insertSlice(vm.allocator, index, new);
 }
 
 fn execCallFunction(vm: *Vm, inst: Instruction) !void {
@@ -433,11 +435,25 @@ fn execCallMethod(vm: *Vm, inst: Instruction) !void {
 
     const self = vm.stack.pop();
     const func = vm.stack.pop();
-    const func_ptr = func.get(.zig_function);
 
-    const self_args = try std.mem.concat(vm.allocator, Object, &.{ &.{self}, args });
-
-    try @call(.auto, func_ptr.*, .{ vm, self_args, null });
+    switch (func.tag) {
+        .function => {
+            const py_func = func.get(.function);
+            try vm.scopes.append(vm.allocator, .{});
+            try vm.co_stack.append(vm.allocator, vm.co);
+            vm.setNewCo(py_func.co);
+            for (args, 0..) |arg, i| {
+                vm.co.varnames[i] = arg;
+            }
+            vm.depth += 1;
+        },
+        .zig_function => {
+            const func_ptr = func.get(.zig_function);
+            const self_args = try std.mem.concat(vm.allocator, Object, &.{ &.{self}, args });
+            try @call(.auto, func_ptr.*, .{ vm, self_args, null });
+        },
+        else => unreachable,
+    }
 }
 
 fn execPopTop(vm: *Vm) !void {
@@ -599,6 +615,10 @@ fn execPopJump(vm: *Vm, inst: Instruction, case: bool) !void {
     if (tos.tag.getBool() == case) {
         vm.co.index = inst.extra;
     }
+}
+
+fn execJumpForward(vm: *Vm, inst: Instruction) !void {
+    vm.co.index += inst.extra;
 }
 
 fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
@@ -806,4 +826,11 @@ pub fn fail(
     stderr.unlock();
 
     std.posix.exit(1);
+}
+
+pub fn absIndex(index: i128, length: usize) usize {
+    return if (length == 0) return 0 else if (index < 0) val: {
+        const true_index: usize = @intCast(length - @abs(index));
+        break :val true_index;
+    } else @intCast(index);
 }
