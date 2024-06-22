@@ -17,7 +17,7 @@ co: CodeObject,
 /// shows the control flow of nodes
 cfg: std.MultiArrayList(Edge) = .{},
 
-scope: std.StringHashMapUnmanaged(u32) = .{},
+scope: std.StringHashMapUnmanaged(Node.Index) = .{},
 
 pub fn evaluate(
     allocator: std.mem.Allocator,
@@ -263,6 +263,8 @@ pub const Node = struct {
     data: Data,
     name: []const u8,
 
+    pub const Index = u32;
+
     pub const Data = union(enum) {
         none,
     };
@@ -271,4 +273,6 @@ pub const Node = struct {
 pub const Edge = struct {
     from: u32,
     to: u32,
+
+    pub const Index = u32;
 };

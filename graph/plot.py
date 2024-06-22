@@ -78,7 +78,7 @@ nodes_with_no_successors = {node for node in G_filtered.nodes if all(cfg_edge[0]
 
 node_colors = ['green' if node == first_node else 'red' if node in nodes_with_no_successors else 'skyblue' for node in G_filtered.nodes]
 
-pos = nx.nx_agraph.graphviz_layout(G_filtered, prog='dot')
+pos = nx.nx_agraph.graphviz_layout(G_filtered, prog='neato')
 plt.figure(figsize=(15, 10))
 nx.draw(G_filtered, pos, with_labels=True, labels=nx.get_node_attributes(G_filtered, 'label'), node_color=node_colors, node_size=3000, font_size=10, font_color='black', font_weight='bold', edge_color='gray')
 
