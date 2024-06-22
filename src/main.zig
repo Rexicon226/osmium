@@ -199,7 +199,7 @@ pub fn run_file(
     const seed = try marshal.parse();
 
     if (options.make_graph) {
-        var graph = try Graph.evaluate(allocator, seed);
+        var graph = try Graph.evaluate(gc_allocator, seed);
         defer graph.deinit();
 
         try graph.dump();
