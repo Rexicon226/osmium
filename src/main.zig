@@ -70,6 +70,7 @@ pub fn log(
 
 const Args = struct {
     make_graph: bool,
+    run: bool,
 };
 
 pub fn main() !u8 {
@@ -104,6 +105,7 @@ pub fn main() !u8 {
     var file_path: ?[:0]const u8 = null;
     var options: Args = .{
         .make_graph = false,
+        .run = true,
     };
 
     while (args.next()) |arg| {
@@ -127,6 +129,8 @@ pub fn main() !u8 {
             }
         } else if (std.mem.eql(u8, arg, "--graph")) {
             options.make_graph = true;
+        } else if (std.mem.eql(u8, arg, "--no-run")) {
+            options.run = false;
         }
     }
 
@@ -148,6 +152,10 @@ fn usage() void {
         \\ Options:
         \\  --help, -h    Print this message
         \\  --version, -v Print the version
+        \\
+        \\ Debug Options:
+        \\  --no-run      Doesn't run the VM, useful for debugging Osmium
+        \\  --graph,      Creates a "graph.bin" which contains CFG information
     ;
 
     const stdout = std.io.getStdOut().writer();
@@ -210,14 +218,13 @@ pub fn run_file(
     }
 
     var vm = try Vm.init(gc_allocator, file_name, seed);
+    defer vm.deinit();
     {
         var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
         try vm.initBuiltinMods(source_file_path);
     }
-
-    try vm.run();
-    defer vm.deinit();
+    if (options.run) try vm.run();
 
     main_log.debug("Run stats:", .{});
     main_log.debug(

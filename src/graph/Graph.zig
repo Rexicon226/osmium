@@ -110,6 +110,7 @@ pub fn walkInst(graph: *Graph, inst: Instruction) !void {
 
         // instructions that only have N arguments
         .BUILD_LIST,
+        .BUILD_TUPLE,
         => {
             for (0..inst.extra) |i| {
                 try graph.edges.append(allocator, .{
