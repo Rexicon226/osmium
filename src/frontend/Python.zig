@@ -19,12 +19,7 @@ pub fn parse(
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
-    // TODO: investigate how to correctly pre init, this keeps crashing for some reason
-    // cpython.PreInitialize();
-    // const cname = cpython.DecodeLocale(std.mem.span(std.os.argv[0]));
-    // cpython.SetProgramName(cname);
-
-    cpython.Initialize();
+    try cpython.Initialize(allocator, build_options.lib_path);
 
     const compiled = cpython.CompileString(source, filename);
     if (null == compiled) {
@@ -44,7 +39,6 @@ pub fn parse(
     }
 
     // construct the final pyc bytes
-
     const pyc_bytes = ptr.?[0..size];
 
     const bytes = try allocator.alloc(u8, size + 16);
@@ -74,3 +68,4 @@ const log = std.log.scoped(.python);
 
 const cpython = @import("cpython.zig");
 const tracer = @import("tracer");
+const build_options = @import("options");
