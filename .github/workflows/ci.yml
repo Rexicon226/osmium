@@ -5,7 +5,7 @@ on:
       - master 
 
 jobs:
-  behaviour-test:
+  test:
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
@@ -28,9 +28,12 @@ jobs:
           path: |
             ~/.cache/zig
             .zig-cache
-          key: osmium-${{hashFiles('build.zig.zon')}}          
+          key: osmium-${{hashFiles('build.zig.zon')}}    
 
-      - name: Run Tests
+      - name: Build Osmium
+        run: zig build
+
+      - name: Run Behaviour Tests
         run: zig build test --summary all
 
       - name: Save Cache

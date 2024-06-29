@@ -74,6 +74,10 @@ pub fn build(b: *std.Build) !void {
             .dest_dir = .{ .override = .{ .custom = "python" } },
         });
         b.getInstallStep().dependOn(&libpython_install.step);
+
+        const test_step = b.step("test", "Test Osmium");
+        try cases.addCases(b, exe, test_step);
+        test_step.dependOn(&libpython_install.step);
     }
 
     // other steps
@@ -88,9 +92,6 @@ pub fn build(b: *std.Build) !void {
 
         const opcode_step = b.step("opcode", "Generate opcodes");
         generateOpCode(b, opcode_step);
-
-        const test_step = b.step("test", "Test Osmium");
-        try cases.addCases(b, exe, test_step);
     }
 }
 
