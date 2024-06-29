@@ -162,7 +162,7 @@ fn generateLibPython(
         .HAVE_CLOCK_GETRES = 1,
         .HAVE_CLOCK_GETTIME = 1,
         .HAVE_CLOCK_SETTIME = 1,
-        .HAVE_CLOSE_RANGE = 0,
+        .HAVE_CLOSE_RANGE = null,
         .HAVE_COMPUTED_GOTOS = 1,
         .HAVE_CONFSTR = 1,
         .HAVE_COPY_FILE_RANGE = 1,
