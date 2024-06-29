@@ -58,7 +58,10 @@ pub fn build(b: *std.Build) !void {
     exe_options.addOption([]const u8, "lib_path", lib_path);
 
     b.installArtifact(exe);
-    b.installArtifact(libpython);
+    const libpython_install = b.addInstallArtifact(libpython, .{
+        .dest_dir = .{ .override = .{ .custom = "python" } },
+    });
+    b.getInstallStep().dependOn(&libpython_install.step);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
