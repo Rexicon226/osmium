@@ -13,9 +13,8 @@
             .url = "https://github.com/Rexicon226/zig-tracer/archive/6400e066bb3849be4906f3b6e124d6c8c5a5083f.tar.gz",
             .hash = "122057453dba0b0cf6f07610d692cc7ab3f1d66defa150c936b398144812564a0c08",
         },
-        .python = .{
-            .url = "https://github.com/Rexicon226/cpython/archive/cdb93314157b15ba6ba0832f4ad7c84c11088331.tar.gz",
-            .hash = "12201233efd4fb9453166782f1beb083953b3e9cc2b347621a55482addf0714e6962",
+        .cpython = .{
+            .path = "../zig-cpython",
         },
         .libgc = .{
             .url = "https://github.com/Rexicon226/zig-libgc/archive/1ea12e140ec1471af5d15dae71b225764c9747ba.tar.gz",
