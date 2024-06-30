@@ -76,7 +76,7 @@ const State = struct {
                 }
 
                 const vm = state.vm;
-                vm.stdout = state.stdout.writer().any();
+                vm.stdout_override = state.stdout.writer().any();
                 vm.is_running = true;
 
                 while (vm.is_running) {
