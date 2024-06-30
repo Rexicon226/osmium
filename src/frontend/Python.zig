@@ -52,8 +52,8 @@ pub fn parse(
     try writer.writeInt(u32, @intCast(source.len), .little);
     try writer.writeAll(pyc_bytes);
 
-    helpers.DecRef(bytecode);
-    helpers.Finalize();
+    externs.Py_DecRef(bytecode);
+    externs.Py_Finalize();
 
     return bytes;
 }
@@ -86,7 +86,10 @@ pub fn Initialize(
     );
     _ = externs.PyConfig_Read(&config);
 
-    const utf32_path = try utf8ToUtf32Z("../python/Lib", allocator);
+    const utf32_path = try utf8ToUtf32Z(
+        "/home/dr/Zython/osmium/zig-out/python/Lib",
+        allocator,
+    );
 
     config.module_search_paths_set = 1;
     _ = externs.PyWideStringList_Append(

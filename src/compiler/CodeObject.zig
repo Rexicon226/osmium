@@ -237,7 +237,7 @@ pub fn hash(
     hasher.update(std.mem.asBytes(&co.stacksize));
     hasher.update(std.mem.asBytes(&co.consts));
     hasher.update(std.mem.asBytes(&co.names));
-    hasher.update(std.mem.asBytes(&co.varnames));
+    hasher.update(std.mem.sliceAsBytes(co.varnames));
     hasher.update(std.mem.asBytes(co.instructions.?)); // CodeObject should be processed before hashing
 
     // we don't hash the index on purpose as it has nothing to do with the unique contents of the object

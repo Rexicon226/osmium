@@ -20,5 +20,9 @@
             .url = "https://github.com/Rexicon226/zig-libgc/archive/1ea12e140ec1471af5d15dae71b225764c9747ba.tar.gz",
             .hash = "12209ad7282d9422973afe3e468e2f867bb102d04fa446a1d1c94f900bda94b7c68e",
         },
+        .libvaxis = .{
+            .url = "https://github.com/rockorager/libvaxis/archive/c213919849114ce03def64806af546b9fc391859.tar.gz",
+            .hash = "12206f2265ca2262f919ec125ff7fe15fa6f3be622806e211d7a9bd3055ba51a0908",
+        },
     },
 }

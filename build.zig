@@ -61,10 +61,12 @@ pub fn build(b: *std.Build) !void {
     const tracer_dep = b.dependency("tracer", .{ .optimize = optimize, .target = target });
     const libgc_dep = b.dependency("libgc", .{ .optimize = optimize, .target = target });
     const cpython_dep = b.dependency("cpython", .{ .optimize = optimize, .target = target });
+    const libvaxis = b.dependency("libvaxis", .{ .optimize = optimize, .target = target });
 
     exe.root_module.addImport("tracer", tracer_dep.module("tracer"));
     exe.root_module.addImport("gc", libgc_dep.module("gc"));
     exe.root_module.addImport("cpython", cpython_dep.module("cpython"));
+    exe.root_module.addImport("vaxis", libvaxis.module("vaxis"));
 
     exe_options.addOption([]const u8, "lib_path", "../python/Lib");
 

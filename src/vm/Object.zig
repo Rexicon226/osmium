@@ -46,13 +46,14 @@ pub const Tag = enum(usize) {
     list,
     set,
 
-    /// A builtin Zig defined function.
     zig_function,
 
     codeobject,
     function,
 
     module,
+
+    class,
 
     pub fn PayloadType(comptime t: Tag) type {
         assert(@intFromEnum(t) >= Tag.first_payload);
@@ -72,8 +73,10 @@ pub const Tag = enum(usize) {
             .function => Payload.PythonFunction,
 
             .module => Payload.Module,
+            .class => Payload.Class,
 
             .none => unreachable,
+
             else => @compileError("TODO: PayloadType " ++ @tagName(t)),
         };
     }
@@ -306,6 +309,18 @@ pub fn getMemberFunction(object: *const Object, name: []const u8, allocator: All
             }
             break :blk try list.toOwnedSlice();
         },
+        .class => {
+            var list = std.ArrayList(std.meta.Child(Payload.MemberFuncTy)).init(allocator);
+            const class = object.get(.class);
+            _ = &list;
+
+            const under_func = class.under_func;
+            const under_co = under_func.get(.codeobject);
+
+            std.debug.print("Name: {s}\n", .{under_co.name});
+
+            unreachable;
+        },
         else => std.debug.panic("{s} has no member functions", .{@tagName(object.tag)}),
     };
     for (member_list) |func| {
@@ -356,6 +371,7 @@ pub const Payload = union(enum) {
     list: List,
     codeobject: CodeObject,
     function: PythonFunction,
+    class: Class,
 
     pub const Int = BigIntManaged;
     pub const String = []u8;
@@ -525,6 +541,16 @@ pub const Payload = union(enum) {
             };
         }
     };
+
+    pub const Class = struct {
+        name: []const u8,
+        under_func: Object,
+
+        pub fn deinit(class: *Class, allocator: std.mem.Allocator) void {
+            allocator.free(class.name);
+            class.under_func.deinit(allocator);
+        }
+    };
 };
 
 pub fn format(
@@ -606,10 +632,10 @@ pub fn format(
                 @intFromPtr(&function.co),
             });
         },
-        // .codeobject => {
-        //     const co = object.get(.codeobject);
-        //     try writer.print("{}", .{co.*});
-        // },
+        .codeobject => {
+            const co = object.get(.codeobject);
+            try writer.print("co({s})", .{co.name});
+        },
 
         else => try writer.print("TODO: Object.format '{s}'", .{@tagName(object.tag)}),
     }
@@ -669,6 +695,12 @@ pub const Context = struct {
             .zig_function => {
                 const payload = obj.get(.zig_function);
                 std.hash.autoHash(&hasher, payload);
+            },
+            .class => {
+                const payload = obj.get(.class);
+
+                hasher.update(payload.name);
+                hasher.update(std.mem.asBytes(&ctx.hash(payload.under_func)));
             },
             inline else => |t| {
                 const payload = obj.get(t);
