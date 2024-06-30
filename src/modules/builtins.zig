@@ -98,8 +98,7 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-print", .{});
     defer t.end();
 
-    const stdout = std.io.getStdOut().writer();
-
+    const stdout = vm.stdout;
     for (args, 0..) |arg, i| {
         printSafe(stdout, "{}", .{arg});
 

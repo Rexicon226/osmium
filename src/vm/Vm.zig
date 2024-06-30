@@ -55,18 +55,28 @@ crash_info: crash_report.VmContext,
 
 builtin_mods: std.StringHashMapUnmanaged(Object.Payload.Module) = .{},
 
+/// Default set to FD1
+stdout: std.io.AnyWriter,
+
 /// Takes ownership of `co`.
 pub fn init(allocator: Allocator, co: CodeObject) !Vm {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
-    return .{
+    var vm: Vm = .{
         .allocator = allocator,
         .is_running = false,
         .co = co,
         .crash_info = crash_report.prepVmContext(co),
         .stack = try std.ArrayListUnmanaged(Object).initCapacity(allocator, co.stacksize),
+        .stdout = std.io.getStdOut().writer().any(),
     };
+
+    assert(vm.scopes.items.len == 0);
+    try vm.scopes.append(vm.allocator, .{});
+    try vm.co.process(vm.allocator);
+
+    return vm;
 }
 
 pub fn initBuiltinMods(vm: *Vm, mod_path: []const u8) !void {
@@ -116,12 +126,6 @@ pub fn run(
 ) !void {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
-
-    // create the immediate scope
-    assert(vm.scopes.items.len == 0);
-    try vm.scopes.append(vm.allocator, .{});
-
-    try vm.co.process(vm.allocator);
 
     vm.is_running = true;
 
@@ -180,7 +184,7 @@ pub fn deinit(vm: *Vm) void {
     vm.* = undefined;
 }
 
-fn exec(vm: *Vm, inst: Instruction) !void {
+pub fn exec(vm: *Vm, inst: Instruction) !void {
     const t = tracer.trace(@src(), "{s}", .{@tagName(inst.op)});
     defer t.end();
 
@@ -307,7 +311,6 @@ fn execStoreName(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
     // NOTE: STORE_NAME does NOT pop the stack, it only stores the TOS.
     const tos = vm.stack.items[vm.stack.items.len - 1];
-    std.debug.print("STORE_NAME: {}\n", .{tos});
     try vm.scopes.items[vm.depth].put(vm.allocator, name, tos);
 }
 
