@@ -18,8 +18,8 @@
             .hash = "12209ad7282d9422973afe3e468e2f867bb102d04fa446a1d1c94f900bda94b7c68e",
         },
         .libvaxis = .{
-            .url = "https://github.com/rockorager/libvaxis/archive/c213919849114ce03def64806af546b9fc391859.tar.gz",
-            .hash = "12206f2265ca2262f919ec125ff7fe15fa6f3be622806e211d7a9bd3055ba51a0908",
+            .url = "https://github.com/rockorager/libvaxis/archive/b68864c3babf2767c15c52911179e8ee9158e1d2.tar.gz",
+            .hash = "12200f6603387e79ab7d4b3d54f7b109408ec3b0f16d1f5cbf45f4fec1b1cf69540e",
         },
         .cpython = .{
             .url = "https://github.com/Rexicon226/zig-cpython/archive/6ee418f9f7be7e811e5555f73a0335905c386914.tar.gz",

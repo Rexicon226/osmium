@@ -3,6 +3,9 @@
 const std = @import("std");
 const mem = std.mem;
 
+const Python = @import("../frontend/Python.zig");
+const Marshal = @import("../compiler/Marshal.zig");
+
 const Vm = @import("Vm.zig");
 const vaxis = @import("vaxis");
 
@@ -12,12 +15,14 @@ const TextView = vaxis.widgets.TextView;
 const border = vaxis.widgets.border;
 
 const State = struct {
-    vm: *Vm,
+    /// Null means setup isn't done yet.
+    vm: ?Vm,
+    target_file: [:0]const u8,
     allocator: std.mem.Allocator,
 
-    is_done: bool,
-    ui_mode: UiMode = .out,
-    text_width: usize,
+    is_stopped: bool,
+    ui_mode: UiMode = .stdout,
+    text_box: ?vaxis.Window,
 
     breakpoints: std.ArrayList(u32),
 
@@ -27,8 +32,10 @@ const State = struct {
         state: *State,
         loop: *vaxis.Loop(Event),
         text: *std.ArrayList(u8),
-        command_str: []const u8,
+        command_str: [:0]const u8,
     ) !void {
+        const allocator = state.allocator;
+
         const text_writer = text.writer();
         var buffered_writer = std.io.bufferedWriter(text_writer);
         defer buffered_writer.flush() catch |err| {
@@ -39,25 +46,30 @@ const State = struct {
         var command_iter = std.mem.splitScalar(u8, command_str, ' ');
         const root_command = command_iter.first();
 
+        try writer.writeByte(' ');
+
         const command = std.meta.stringToEnum(Command, root_command) orelse {
-            try writer.print(" unknown command - \"{s}\" - use \"help\"", .{root_command});
+            try writer.print("unknown command - \"{s}\" - use \"help\"", .{root_command});
 
             try writer.writeByte('\n');
-            try writer.writeBytesNTimes("⎯", state.text_width);
+            const text_box = state.text_box orelse return;
+            try writer.writeBytesNTimes("─", text_box.width);
+            try writer.writeByte('\n');
             return;
         };
 
         switch (command) {
             .help => {
                 const usage =
-                    \\ Utility Commands:
+                    \\Utility Commands:
                     \\      help  - Prints this help message.
                     \\      quit  - Quits out of the debugger and Osmium.
                     \\      clear - Clears the text.
                     \\
                     \\ VM Commands:
+                    \\      setup    - Parses and initialises the VM for running.
                     \\      run      - Runs the provided file until end or interruption.
-                    \\      continue - Continues after an interruption.
+                    \\      print    - Prints the contents of the source file being run.
                     \\      set      - "set help" for more information.
                     \\      remove   - "remove help" for more information.
                 ;
@@ -65,17 +77,119 @@ const State = struct {
             },
             .quit => loop.postEvent(.quit),
             .clear => {
+                if (command_iter.next()) |target| {
+                    if (mem.eql(u8, target, "stdout")) {
+                        state.stdout.clearRetainingCapacity();
+                        return;
+                    }
+                }
+
                 text.clearRetainingCapacity();
                 return;
             },
+            .setup => setup: {
+                var target_file: [:0]const u8 = "";
 
-            .run => run: {
-                if (state.is_done) {
-                    try writer.writeAll("VM already done, restart debugger to run again");
-                    break :run;
+                if (command_iter.next()) |other_file| {
+                    if (mem.endsWith(u8, other_file, ".py")) {
+                        target_file = try allocator.dupeZ(u8, other_file);
+                    } else if (mem.eql(u8, other_file, "status")) {
+                        if (state.vm == null) {
+                            try writer.writeAll("vm is not setup");
+                        } else {
+                            try writer.writeAll("vm is setup");
+                        }
+                        break :setup;
+                    } else if (mem.eql(u8, other_file, "help")) {
+                        const usage =
+                            \\"setup" Usage:
+                            \\      help       - Prints this help message.
+                            \\      status     - Prints whether or not the VM has been setup.
+                            \\
+                            \\      length     - Prints the length of the codeobject 
+                            \\                   currently loaded. This is what you should 
+                            \\                   base your breakpoints off of. There is no
+                            \\                   guarantee that the code will reach the end.
+                            \\
+                            \\      [filename] - Sets up and overrides the current VM is 
+                            \\                   there is one.
+                            \\
+                            \\      (nothing)  - Will setup the file provided when 
+                            \\                   running Osmium.
+                        ;
+                        try writer.writeAll(usage);
+                        break :setup;
+                    } else if (mem.eql(u8, other_file, "length")) {
+                        const vm = state.vm orelse {
+                            try writer.writeAll("to get the length, setup the vm");
+                            break :setup;
+                        };
+                        const length = vm.co.code.len / 2; // each instruction takes 2 bytes
+                        try writer.print("VM length is: {d}", .{length});
+                        break :setup;
+                    } else {
+                        try writer.print("unknown \"setup\" argument - {s} - see \"setup help\"", .{other_file});
+                        break :setup;
+                    }
+                } else target_file = state.target_file;
+
+                var timer = try std.time.Timer.start();
+
+                const source_file = std.fs.cwd().openFile(target_file, .{ .lock = .exclusive }) catch |err| {
+                    switch (err) {
+                        error.FileNotFound => break :setup try writer.print("provided file doesn't exist: {s}", .{target_file}),
+                        else => |e| return e,
+                    }
+                };
+                defer source_file.close();
+                const source_file_size = (try source_file.stat()).size;
+                const source = try source_file.readToEndAllocOptions(allocator, source_file_size, source_file_size, @alignOf(u8), 0);
+
+                {
+                    const time = timer.read();
+                    const float_time = @as(f32, @floatFromInt(time)) / std.time.ns_per_us;
+                    try writer.print("{d:.2}us - File Read\n", .{float_time});
+                    timer.reset();
                 }
 
-                const vm = state.vm;
+                const pyc = try Python.parse(source, target_file, allocator);
+
+                {
+                    const time = timer.read();
+                    const float_time = @as(f32, @floatFromInt(time)) / std.time.ns_per_ms;
+                    try writer.print(" {d:.2}ms - Bytecode Generation\n", .{float_time});
+                    timer.reset();
+                }
+
+                var marshal = try Marshal.init(allocator, pyc);
+                const seed = try marshal.parse();
+
+                {
+                    const time = timer.read();
+                    const float_time = @as(f32, @floatFromInt(time)) / std.time.ns_per_us;
+                    try writer.print(" {d:.2}us - Seed Parsing\n", .{float_time});
+                    timer.reset();
+                }
+
+                state.vm = try Vm.init(allocator, seed);
+                {
+                    var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                    const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
+                    try state.vm.?.initBuiltinMods(source_file_path);
+                }
+
+                {
+                    const time = timer.read();
+                    const float_time = @as(f32, @floatFromInt(time)) / std.time.ns_per_us;
+                    try writer.print(" {d:.2}us - Setup VM", .{float_time});
+                    timer.reset();
+                }
+            },
+            .run => run: {
+                const vm = &(state.vm orelse {
+                    break :run try writer.writeAll("you must run \"setup\" before \"run\"");
+                });
+                if (!state.is_stopped) state.stdout.clearRetainingCapacity();
                 vm.stdout_override = state.stdout.writer().any();
                 vm.is_running = true;
 
@@ -86,7 +200,8 @@ const State = struct {
                         if (target == current_index) {
                             try writer.print("VM {s} hit breakpoint {d}", .{ vm.co.name, vm.co.index });
                             vm.is_running = false;
-                            _ = state.breakpoints.swapRemove(i);
+                            state.is_stopped = true;
+                            _ = state.breakpoints.swapRemove(i); // TODO: remove this when we have a step forward command
                             break :run; // break so that the instruction at the breakpoint isn't executed
                         }
                     }
@@ -98,14 +213,15 @@ const State = struct {
                 }
 
                 try writer.print("VM {s} stopped at index {d} successfully", .{ vm.co.name, vm.co.index });
-                state.is_done = true;
+                state.vm = null; // TODO: deinit the vm
+                state.is_stopped = false;
             },
 
             .set => set: {
                 if (command_iter.next()) |next_command| {
                     if (mem.eql(u8, next_command, "help")) {
                         const usage =
-                            \\ "set" Usage:
+                            \\"set" Usage:
                             \\      help  - Prints this help message.
                             \\      ui    - Set features of the UI.
                             \\      break - Set breakpoints.
@@ -113,23 +229,24 @@ const State = struct {
                         try writer.writeAll(usage);
                     } else if (mem.eql(u8, next_command, "ui")) {
                         const ui_command = command_iter.next() orelse {
-                            try writer.writeAll(" \"set ui\" expected an argument afterwards but none was provided");
+                            try writer.writeAll("\"set ui\" expected an argument afterwards but none was provided");
                             break :set;
                         };
 
                         if (mem.eql(u8, ui_command, "help")) {
                             try writer.writeAll(UiMode.usage);
                         } else if (std.meta.stringToEnum(UiMode, ui_command)) |mode| {
-                            try writer.print("todo mode: {s}", .{@tagName(mode)});
+                            state.ui_mode = mode;
+                            try writer.print("set ui {s}", .{ui_command});
                         } else {
                             try writer.print(
-                                " unknown \"set ui\" command - \"{s}\" - use \"set ui help\"",
+                                "unknown \"set ui\" command - \"{s}\" - use \"set ui help\"",
                                 .{ui_command},
                             );
                         }
                     } else if (mem.eql(u8, next_command, "break")) {
                         const break_command = command_iter.next() orelse {
-                            try writer.writeAll(" \"set break\" expected an argument afterwards but none was provided");
+                            try writer.writeAll("\"set break\" expected an argument afterwards but none was provided");
                             break :set;
                         };
 
@@ -144,7 +261,7 @@ const State = struct {
                             break :set;
                         } else if (mem.eql(u8, break_command, "help")) {
                             const usage =
-                                \\ "set break" Usage:
+                                \\"set break" Usage:
                                 \\      help   - Prints this usage message.
                                 \\      list   - Lists set breakpoints.
                                 \\      [0-9]+ - Adds a breakpoint to that number.
@@ -154,7 +271,7 @@ const State = struct {
                         }
 
                         const number = std.fmt.parseInt(u32, break_command, 10) catch |err| {
-                            try writer.print(" \"set break\" was provided with an invalid target: {s}", .{
+                            try writer.print("\"set break\" was provided with an invalid target: {s}", .{
                                 @errorName(err),
                             });
                             break :set;
@@ -163,31 +280,45 @@ const State = struct {
                         try writer.print("breakpoint at {d} was added", .{number});
                     } else {
                         try writer.print(
-                            " unknown \"set\" command - \"{s}\" - use \"set help\"",
+                            "unknown \"set\" command - \"{s}\" - use \"set help\"",
                             .{next_command},
                         );
                     }
                 } else {
-                    try writer.writeAll(" no \"set\" command provided, use \"set help\"");
+                    try writer.writeAll("no \"set\" command provided, use \"set help\"");
                 }
             },
-            .remove => try writer.writeAll(" TODO: remove"),
+            .remove => try writer.writeAll("TODO: remove"),
+            .print => print: {
+                const vm = state.vm orelse {
+                    break :print try writer.writeAll("you must run \"setup\" before \"print\"");
+                };
+                const filepath = vm.co.filename;
+                const source = try std.fs.cwd().readFileAlloc(allocator, filepath, 1 * 1024);
+                try writer.writeAll(source);
+            },
         }
 
         try writer.writeByte('\n');
-        try writer.writeBytesNTimes("⎯", state.text_width);
+        const text_box = state.text_box orelse return;
+        try writer.writeBytesNTimes("─", text_box.width);
         try writer.writeByte('\n');
     }
 };
 
 pub fn run(
-    vm: *Vm,
-    allocator: std.mem.Allocator,
+    target_file: [:0]const u8,
+    gpa: std.mem.Allocator,
 ) !void {
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     var state: State = .{
-        .vm = vm,
-        .text_width = 0,
-        .is_done = false,
+        .vm = null,
+        .target_file = target_file,
+        .text_box = null,
+        .is_stopped = false,
         .allocator = allocator,
         .breakpoints = std.ArrayList(u32).init(allocator),
         .stdout = std.ArrayList(u8).init(allocator),
@@ -209,7 +340,11 @@ pub fn run(
     defer loop.stop();
 
     try vx.enterAltScreen(tty.anyWriter());
+    try vx.queryTerminal(tty.anyWriter(), 1 * std.time.ns_per_s);
     try vx.setTitle(tty.anyWriter(), "Osmium Debug Session");
+
+    try vx.queryColor(tty.anyWriter(), .fg);
+    try vx.queryColor(tty.anyWriter(), .bg);
 
     var cli_text = std.ArrayList(u8).init(allocator);
 
@@ -217,6 +352,9 @@ pub fn run(
     defer cli_term.deinit();
 
     var text_view: TextView = .{};
+    var out_text_view: TextView = .{};
+
+    var active: enum { rhs, lhs } = .lhs;
 
     while (true) {
         const event = loop.nextEvent();
@@ -225,10 +363,18 @@ pub fn run(
                 if (key.matches('c', .{ .ctrl = true })) {
                     loop.postEvent(.quit);
                 } else if (key.matches(0xd, .{})) { // new line
-                    loop.postEvent(.{ .process_command = cli_term.buf.items });
+                    const cliz = cli_term.buf.items;
+                    loop.postEvent(.{ .process_command = try allocator.dupeZ(u8, cliz) });
+                } else if (key.matches(vaxis.Key.right, .{})) {
+                    active = .rhs;
+                } else if (key.matches(vaxis.Key.left, .{})) {
+                    active = .lhs;
                 } else {
                     try cli_term.update(.{ .key_press = key });
-                    text_view.input(key);
+                    switch (active) {
+                        .rhs => out_text_view.input(key),
+                        .lhs => text_view.input(key),
+                    }
                 }
             },
             .winsize => |ws| try vx.resize(allocator, tty.anyWriter(), ws),
@@ -244,6 +390,12 @@ pub fn run(
         const win = vx.window();
         win.clear();
 
+        const active_style: vaxis.Cell.Style = .{ .bg = .{ .index = 10 } };
+        const default_style: vaxis.Cell.Style = .{ .bg = .default };
+
+        const lhs_style = if (active == .lhs) active_style else default_style;
+        const rhs_style = if (active == .rhs) active_style else default_style;
+
         // left side
         {
             const box = win.child(.{
@@ -253,10 +405,10 @@ pub fn run(
                 .height = .{ .limit = win.height },
                 .border = .{
                     .where = .all,
-                    .style = .{ .fg = .default },
+                    .style = lhs_style,
                 },
             });
-            state.text_width = box.width;
+            state.text_box = box;
 
             const cli_input_box = box.child(.{
                 .x_off = 0,
@@ -265,7 +417,6 @@ pub fn run(
                 .height = .{ .limit = 3 },
                 .border = .{
                     .where = .all,
-                    .style = .{ .fg = .default },
                 },
             });
             cli_term.draw(cli_input_box);
@@ -287,7 +438,7 @@ pub fn run(
             };
             _ = try writer.write(cli_text.items);
 
-            text_view.draw(cli_text_box, writer.buffer.*);
+            text_view.draw(cli_text_box, buffer);
         }
 
         // right side
@@ -299,10 +450,52 @@ pub fn run(
                 .height = .{ .limit = win.height },
                 .border = .{
                     .where = .all,
-                    .style = .{ .fg = .default },
+                    .style = rhs_style,
                 },
             });
-            _ = box;
+
+            // mode label
+            const mode_text = try std.fmt.allocPrint(allocator, "Current Mode: {s}", .{@tagName(state.ui_mode)});
+
+            const mode_box = box.child(.{
+                .x_off = 0,
+                .y_off = 0,
+                .width = .{ .limit = box.width },
+                .height = .{ .limit = 2 },
+                .border = .{ .where = .bottom },
+            });
+
+            const mode_label = mode_box.child(.{
+                .x_off = mode_box.width / 2 - (mode_text.len / 2),
+                .y_off = 0,
+                .width = .{ .limit = mode_box.width },
+                .height = .{ .limit = 2 },
+            });
+
+            _ = try mode_label.print(&.{.{ .text = mode_text }}, .{});
+
+            const bottom_box = box.child(.{
+                .x_off = 0,
+                .y_off = 2,
+                .width = .{ .limit = box.width },
+                .height = .{ .limit = box.height },
+            });
+
+            switch (state.ui_mode) {
+                .stdout => {
+                    var buffer: TextView.Buffer = .{};
+                    var writer: TextView.BufferWriter = .{
+                        .allocator = allocator,
+                        .buffer = &buffer,
+                        .gd = &vx.unicode.grapheme_data,
+                        .wd = &vx.unicode.width_data,
+                    };
+                    _ = try writer.write(state.stdout.items);
+
+                    out_text_view.draw(bottom_box, buffer);
+                },
+                .code => {},
+            }
         }
 
         try vx.render(tty.anyWriter());
@@ -313,22 +506,24 @@ const Event = union(enum) {
     key_press: vaxis.Key,
     winsize: vaxis.Winsize,
     quit,
-    process_command: []const u8,
+    process_command: [:0]const u8,
 };
 
 const Command = enum {
     help,
     quit,
     clear,
+    setup,
 
     run,
     set,
     remove,
+    print,
 };
 
 const UiMode = enum {
     code,
-    out,
+    stdout,
 
     const usage: []const u8 = blk: {
         var set_ui: []const u8 = " \"set ui\" Usage:";

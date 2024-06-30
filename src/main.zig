@@ -161,8 +161,8 @@ fn usage() void {
         \\
         \\ Debug Options:
         \\  --no-run      Doesn't run the VM, useful for debugging Osmium
-        \\  --graph,      Creates a "graph.bin" which contains CFG information
-        \\  --debug,      Runs a interactable mode to debug the VM
+        \\  --graph       Creates a "graph.bin" which contains CFG information
+        \\  --debug       Runs a interactable mode to debug the VM
     ;
 
     const stdout = std.io.getStdOut().writer();
@@ -192,6 +192,8 @@ pub fn run_file(
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
+    if (options.run_debug) return debug.run(file_name, allocator);
+
     const source_file = std.fs.cwd().openFile(file_name, .{ .lock = .exclusive }) catch |err| {
         switch (err) {
             error.FileNotFound => @panic("invalid file provided"),
@@ -206,6 +208,7 @@ pub fn run_file(
     const gc_allocator = gc.allocator();
     gc.enable();
     gc.setFindLeak(build_options.enable_logging);
+    gc.setAllInteriorPointers(true);
     defer gc.collect();
 
     const pyc = try Python.parse(source, file_name, gc_allocator);
@@ -231,7 +234,6 @@ pub fn run_file(
         const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
         try vm.initBuiltinMods(source_file_path);
     }
-    if (options.run_debug) try debug.run(&vm, gc_allocator);
     if (options.run) try vm.run();
 
     main_log.debug("Run stats:", .{});
