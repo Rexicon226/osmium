@@ -162,7 +162,7 @@ fn usage() void {
         \\ Debug Options:
         \\  --no-run      Doesn't run the VM, useful for debugging Osmium
         \\  --graph,      Creates a "graph.bin" which contains CFG information
-        \\  --debug,      Runs a interactable debug mode to debug the VM
+        \\  --debug,      Runs a interactable mode to debug the VM
     ;
 
     const stdout = std.io.getStdOut().writer();
