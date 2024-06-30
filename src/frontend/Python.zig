@@ -87,7 +87,7 @@ pub fn Initialize(
     _ = externs.PyConfig_Read(&config);
 
     const utf32_path = try utf8ToUtf32Z(
-        "/home/dr/Zython/osmium/zig-out/python/Lib",
+        build_options.lib_path,
         allocator,
     );
 

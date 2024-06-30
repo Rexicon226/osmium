@@ -68,8 +68,7 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("cpython", cpython_dep.module("cpython"));
     exe.root_module.addImport("vaxis", libvaxis.module("vaxis"));
 
-    // install the Lib folder from python
-    const python_dep = b.dependency("python", .{});
+    const python_dep = cpython_dep.builder.dependency("python", .{});
     const libpython_install = b.addInstallDirectory(.{
         .source_dir = python_dep.path("Lib"),
         .install_dir = .{ .custom = "python" },
