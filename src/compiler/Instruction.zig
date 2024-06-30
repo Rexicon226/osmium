@@ -61,8 +61,10 @@ fn format2(
         .LOAD_NAME,
         .STORE_NAME,
         .IMPORT_NAME,
+        .LOAD_METHOD,
         => try writer.print("{d} ({s})", .{ extra, co.getName(extra) }),
         .CALL_FUNCTION,
+        .CALL_METHOD,
         => try writer.print("{d}", .{extra}),
         .MAKE_FUNCTION,
         => {

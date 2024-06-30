@@ -8,9 +8,10 @@ const builtin = @import("builtin");
 const Graph = @import("graph/Graph.zig");
 const Python = @import("frontend/Python.zig");
 const Marshal = @import("compiler/Marshal.zig");
-const Vm = @import("vm/Vm.zig");
 const crash_report = @import("crash_report.zig");
+const Vm = @import("vm/Vm.zig");
 const Object = @import("vm/Object.zig");
+const debug = @import("vm/debug.zig");
 
 const build_options = @import("options");
 
@@ -70,6 +71,7 @@ pub fn log(
 
 const Args = struct {
     make_graph: bool,
+    run_debug: bool,
     run: bool,
 };
 
@@ -105,6 +107,7 @@ pub fn main() !u8 {
     var file_path: ?[:0]const u8 = null;
     var options: Args = .{
         .make_graph = false,
+        .run_debug = false,
         .run = true,
     };
 
@@ -131,6 +134,9 @@ pub fn main() !u8 {
             options.make_graph = true;
         } else if (std.mem.eql(u8, arg, "--no-run")) {
             options.run = false;
+        } else if (std.mem.eql(u8, arg, "--debug")) {
+            options.run_debug = true;
+            options.run = false;
         }
     }
 
@@ -156,6 +162,7 @@ fn usage() void {
         \\ Debug Options:
         \\  --no-run      Doesn't run the VM, useful for debugging Osmium
         \\  --graph,      Creates a "graph.bin" which contains CFG information
+        \\  --debug,      Runs a interactable debug mode to debug the VM
     ;
 
     const stdout = std.io.getStdOut().writer();
@@ -217,13 +224,14 @@ pub fn run_file(
         try graph.dump();
     }
 
-    var vm = try Vm.init(gc_allocator, file_name, seed);
+    var vm = try Vm.init(gc_allocator, seed);
     defer vm.deinit();
     {
         var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
         try vm.initBuiltinMods(source_file_path);
     }
+    if (options.run_debug) try debug.run(&vm, gc_allocator);
     if (options.run) try vm.run();
 
     main_log.debug("Run stats:", .{});

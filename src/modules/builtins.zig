@@ -317,7 +317,7 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
         const object = try marshal.parse();
 
         // create a new vm to evaluate the global scope of the module
-        var mod_vm = try Vm.init(vm.allocator, absolute_path, object);
+        var mod_vm = try Vm.init(vm.allocator, object);
         mod_vm.initBuiltinMods(absolute_path) catch |err| {
             return vm.fail("failed init evaulte module {s} with error {s}", .{ absolute_path, @errorName(err) });
         };
@@ -390,5 +390,9 @@ fn __build_class__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinErr
     assert(func_obj.tag == .function);
     assert(name_obj.tag == .string);
 
-    std.debug.panic("TODO: implement __build_class__", .{});
+    const class = try vm.createObject(.class, .{
+        .name = name_obj.get(.string),
+        .under_func = func_obj,
+    });
+    try vm.stack.append(vm.allocator, class);
 }

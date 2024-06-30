@@ -48,12 +48,6 @@ depth: u32 = 0,
 /// VM State
 is_running: bool,
 
-/// Name of the python file being executed.
-///
-/// TODO: this should be taken from the current codeobject,
-/// however that doesn't seem to be working right now.
-name: [:0]const u8,
-
 stack: std.ArrayListUnmanaged(Object),
 scopes: std.ArrayListUnmanaged(std.StringHashMapUnmanaged(Object)) = .{},
 
@@ -62,7 +56,7 @@ crash_info: crash_report.VmContext,
 builtin_mods: std.StringHashMapUnmanaged(Object.Payload.Module) = .{},
 
 /// Takes ownership of `co`.
-pub fn init(allocator: Allocator, name: [:0]const u8, co: CodeObject) !Vm {
+pub fn init(allocator: Allocator, co: CodeObject) !Vm {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
@@ -70,7 +64,6 @@ pub fn init(allocator: Allocator, name: [:0]const u8, co: CodeObject) !Vm {
         .allocator = allocator,
         .is_running = false,
         .co = co,
-        .name = name,
         .crash_info = crash_report.prepVmContext(co),
         .stack = try std.ArrayListUnmanaged(Object).initCapacity(allocator, co.stacksize),
     };
@@ -142,7 +135,7 @@ pub fn run(
         log.debug(
             "{s} - {s}: {s} (stack_size={}, pc={}/{}, depth={}, heap={})",
             .{
-                vm.name,
+                vm.co.filename,
                 vm.co.name,
                 @tagName(instruction.op),
                 vm.stack.items.len,
@@ -314,6 +307,7 @@ fn execStoreName(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
     // NOTE: STORE_NAME does NOT pop the stack, it only stores the TOS.
     const tos = vm.stack.items[vm.stack.items.len - 1];
+    std.debug.print("STORE_NAME: {}\n", .{tos});
     try vm.scopes.items[vm.depth].put(vm.allocator, name, tos);
 }
 
@@ -400,6 +394,20 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
             const current_hash = vm.co.hash();
             const new_hash = func.co.hash();
             if (current_hash == new_hash) vm.fail("recursive function calls aren't allowed (yet)", .{});
+
+            try vm.scopes.append(vm.allocator, .{});
+            try vm.co_stack.append(vm.allocator, vm.co);
+            vm.setNewCo(func.co);
+            for (args, 0..) |arg, i| {
+                vm.co.varnames[i] = arg;
+            }
+            vm.depth += 1;
+        },
+        .class => {
+            const class = func_object.get(.class);
+            const under_func = class.under_func;
+
+            const func = under_func.get(.function);
 
             try vm.scopes.append(vm.allocator, .{});
             try vm.co_stack.append(vm.allocator, vm.co);
