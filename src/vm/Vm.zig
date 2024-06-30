@@ -56,7 +56,7 @@ crash_info: crash_report.VmContext,
 builtin_mods: std.StringHashMapUnmanaged(Object.Payload.Module) = .{},
 
 /// Default set to FD1
-stdout: std.io.AnyWriter,
+stdout_override: ?std.io.AnyWriter,
 
 /// Takes ownership of `co`.
 pub fn init(allocator: Allocator, co: CodeObject) !Vm {
@@ -69,7 +69,7 @@ pub fn init(allocator: Allocator, co: CodeObject) !Vm {
         .co = co,
         .crash_info = crash_report.prepVmContext(co),
         .stack = try std.ArrayListUnmanaged(Object).initCapacity(allocator, co.stacksize),
-        .stdout = std.io.getStdOut().writer().any(),
+        .stdout_override = null,
     };
 
     assert(vm.scopes.items.len == 0);
@@ -793,6 +793,11 @@ fn setNewCo(
 ) void {
     vm.crash_info = crash_report.prepVmContext(new_co);
     vm.co = new_co;
+}
+
+const stdout = std.io.getStdOut().writer();
+pub fn getStdout(vm: *const Vm) std.io.AnyWriter {
+    return vm.stdout_override orelse stdout.any();
 }
 
 pub fn fail(

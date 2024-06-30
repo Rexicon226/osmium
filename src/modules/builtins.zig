@@ -98,7 +98,7 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     const t = tracer.trace(@src(), "builtin-print", .{});
     defer t.end();
 
-    const stdout = vm.stdout;
+    const stdout = vm.getStdout();
     for (args, 0..) |arg, i| {
         printSafe(stdout, "{}", .{arg});
 
@@ -146,8 +146,8 @@ fn input(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
         const prompt = args[0];
         const prompt_string = prompt.get(.string);
 
-        const stdout = std.io.getStdOut();
-        printSafe(stdout.writer(), "{s}", .{prompt_string});
+        const stdout = vm.getStdout();
+        printSafe(stdout, "{s}", .{prompt_string});
     }
 
     const stdin = std.io.getStdIn();
