@@ -162,7 +162,7 @@ const State = struct {
                 {
                     const time = timer.read();
                     const float_time = @as(f32, @floatFromInt(time)) / std.time.ns_per_us;
-                    try writer.print("{d:.2}us - File Read\n", .{float_time});
+                    try writer.print("{d:0>5.2}us - File Read\n", .{float_time});
                     timer.reset();
                 }
 
@@ -171,7 +171,7 @@ const State = struct {
                 {
                     const time = timer.read();
                     const float_time = @as(f32, @floatFromInt(time)) / std.time.ns_per_ms;
-                    try writer.print(" {d:.2}ms - Bytecode Generation\n", .{float_time});
+                    try writer.print(" {d:0>5.2}ms - Bytecode Generation\n", .{float_time});
                     timer.reset();
                 }
 
@@ -181,7 +181,7 @@ const State = struct {
                 {
                     const time = timer.read();
                     const float_time = @as(f32, @floatFromInt(time)) / std.time.ns_per_us;
-                    try writer.print(" {d:.2}us - Seed Parsing\n", .{float_time});
+                    try writer.print(" {d:0>5.2}us - Seed Parsing\n", .{float_time});
                     timer.reset();
                 }
 
@@ -195,7 +195,7 @@ const State = struct {
                 {
                     const time = timer.read();
                     const float_time = @as(f32, @floatFromInt(time)) / std.time.ns_per_us;
-                    try writer.print(" {d:.2}us - Setup VM", .{float_time});
+                    try writer.print(" {d:0>5.2}us - Setup VM", .{float_time});
                     timer.reset();
                 }
             },
@@ -533,21 +533,31 @@ pub fn run(
                 .height = .{ .limit = box.height },
             });
 
-            switch (state.ui_mode) {
-                .stdout => {
-                    var buffer: TextView.Buffer = .{};
-                    var writer: TextView.BufferWriter = .{
-                        .allocator = allocator,
-                        .buffer = &buffer,
-                        .gd = &vx.unicode.grapheme_data,
-                        .wd = &vx.unicode.width_data,
-                    };
-                    _ = try writer.write(state.stdout.items);
+            var buffer: TextView.Buffer = .{};
+            var text_writer: TextView.BufferWriter = .{
+                .allocator = allocator,
+                .buffer = &buffer,
+                .gd = &vx.unicode.grapheme_data,
+                .wd = &vx.unicode.width_data,
+            };
 
-                    out_text_view.draw(bottom_box, buffer);
+            switch (state.ui_mode) {
+                .stdout => _ = try text_writer.write(state.stdout.items),
+                .code => {
+                    var co_buffer = std.ArrayList(u8).init(allocator);
+                    const writer = co_buffer.writer();
+
+                    if (state.vm) |vm| {
+                        try vm.co.print_co(writer, vm.co.index);
+                    } else {
+                        try writer.writeAll("To see Code Structure, setup a VM");
+                    }
+
+                    _ = try text_writer.write(co_buffer.items);
                 },
-                .code => {},
             }
+
+            out_text_view.draw(bottom_box, buffer);
         }
 
         try vx.render(tty.anyWriter());

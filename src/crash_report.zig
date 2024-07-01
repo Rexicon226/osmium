@@ -122,21 +122,6 @@ pub fn prepVmContext(current_co: CodeObject) VmContext {
     } else .{};
 }
 
-pub fn print_co(writer: anytype, data: struct { co: CodeObject, index: ?usize }) !void {
-    const co = data.co;
-    const maybe_index = data.index;
-
-    try writer.print("{}", .{co});
-
-    const instructions = co.instructions.?; // should have already been processed
-    try writer.writeAll("Instructions:\n");
-    for (instructions, 0..) |inst, i| {
-        if (maybe_index) |index| if (index == i) try writer.print("(#{d}) -> ", .{index});
-        if (maybe_index == null or maybe_index.? != i) try writer.writeAll("\t");
-        try writer.print("{d}\t{}\n", .{ i * 2, inst.fmt(co) });
-    }
-}
-
 var buffer: [10 * 1024]u8 = undefined;
 
 fn dumpObjectTrace() !void {
@@ -148,10 +133,7 @@ fn dumpObjectTrace() !void {
     var current_co = state.current_co;
     try current_co.process(allocator);
 
-    try print_co(stderr, .{
-        .co = current_co,
-        .index = state.index,
-    });
+    try current_co.print_co(stderr, state.index);
 
     var depth: usize = 0;
     var temp_state: VmContext = state.*;

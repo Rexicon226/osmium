@@ -143,6 +143,18 @@ pub fn format(
     }
 }
 
+pub fn print_co(co: CodeObject, writer: anytype, maybe_index: ?usize) !void {
+    try writer.print("{}", .{co});
+
+    const instructions = co.instructions.?; // should have already been processed
+    try writer.writeAll("Instructions:\n");
+    for (instructions, 0..) |inst, i| {
+        if (maybe_index) |index| if (index == i) try writer.print("(#{d}) -> ", .{index});
+        if (maybe_index == null or maybe_index.? != i) try writer.writeAll("\t");
+        try writer.print("{d}\t{}\n", .{ i * 2, inst.fmt(co) });
+    }
+}
+
 pub fn process(
     co: *CodeObject,
     allocator: std.mem.Allocator,
