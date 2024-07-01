@@ -19,14 +19,14 @@ const State = struct {
     vm: ?Vm,
     target_file: [:0]const u8,
     allocator: std.mem.Allocator,
-
     is_stopped: bool,
     ui_mode: UiMode = .stdout,
     text_box: ?vaxis.Window,
-
     breakpoints: std.ArrayList(u32),
-
     stdout: std.ArrayList(u8),
+
+    scrollback: std.ArrayList([:0]const u8),
+    scrollback_offset: usize,
 
     fn processCommand(
         state: *State,
@@ -35,6 +35,19 @@ const State = struct {
         command_str: [:0]const u8,
     ) !void {
         const allocator = state.allocator;
+
+        // only append unique commands
+        var unique: bool = true;
+        for (state.scrollback.items) |scrollback| {
+            const trimmed_scrollback = std.mem.trim(u8, scrollback, &std.ascii.whitespace);
+            const trimmed_command = std.mem.trim(u8, command_str, &std.ascii.whitespace);
+            if (std.mem.eql(u8, trimmed_scrollback, trimmed_command)) {
+                unique = false;
+            }
+        }
+        if (unique) {
+            try state.scrollback.append(command_str);
+        }
 
         const text_writer = text.writer();
         var buffered_writer = std.io.bufferedWriter(text_writer);
@@ -69,6 +82,7 @@ const State = struct {
                     \\ VM Commands:
                     \\      setup    - Parses and initialises the VM for running.
                     \\      run      - Runs the provided file until end or interruption.
+                    \\      step     - Steps forward 1 index.
                     \\      print    - Prints the contents of the source file being run.
                     \\      set      - "set help" for more information.
                     \\      remove   - "remove help" for more information.
@@ -185,6 +199,21 @@ const State = struct {
                     timer.reset();
                 }
             },
+            .step => step: {
+                const vm = &(state.vm orelse {
+                    break :step try writer.writeAll("you must run \"setup\" before \"run\"");
+                });
+                vm.stdout_override = state.stdout.writer().any();
+                if (!state.is_stopped) break :step try writer.writeAll("vm must be stopped before stepping");
+                if (vm.is_running) break :step try writer.writeAll("vm must not be running to step");
+
+                const instructions = vm.co.instructions.?;
+                const instruction = instructions[vm.co.index];
+                vm.co.index += 1;
+                try vm.exec(instruction);
+
+                try writer.print("VM {s} stepped to index {d} successfully", .{ vm.co.name, vm.co.index });
+            },
             .run => run: {
                 const vm = &(state.vm orelse {
                     break :run try writer.writeAll("you must run \"setup\" before \"run\"");
@@ -216,7 +245,6 @@ const State = struct {
                 state.vm = null; // TODO: deinit the vm
                 state.is_stopped = false;
             },
-
             .set => set: {
                 if (command_iter.next()) |next_command| {
                     if (mem.eql(u8, next_command, "help")) {
@@ -318,10 +346,12 @@ pub fn run(
         .vm = null,
         .target_file = target_file,
         .text_box = null,
-        .is_stopped = false,
+        .is_stopped = true,
         .allocator = allocator,
         .breakpoints = std.ArrayList(u32).init(allocator),
         .stdout = std.ArrayList(u8).init(allocator),
+        .scrollback = std.ArrayList([:0]const u8).init(allocator),
+        .scrollback_offset = 0,
     };
 
     var tty = try vaxis.Tty.init();
@@ -359,16 +389,37 @@ pub fn run(
     while (true) {
         const event = loop.nextEvent();
         switch (event) {
-            .key_press => |key| {
+            .key_press => |key| k: {
                 if (key.matches('c', .{ .ctrl = true })) {
                     loop.postEvent(.quit);
                 } else if (key.matches(0xd, .{})) { // new line
+                    state.scrollback_offset = 0;
                     const cliz = cli_term.buf.items;
                     loop.postEvent(.{ .process_command = try allocator.dupeZ(u8, cliz) });
                 } else if (key.matches(vaxis.Key.right, .{})) {
                     active = .rhs;
                 } else if (key.matches(vaxis.Key.left, .{})) {
                     active = .lhs;
+                } else if (key.matches(vaxis.Key.up, .{}) and active == .lhs) {
+                    if (state.scrollback.items.len > state.scrollback_offset) state.scrollback_offset += 1;
+                    const scrollback = state.scrollback.items[state.scrollback.items.len - state.scrollback_offset];
+
+                    cli_term.buf.clearRetainingCapacity();
+                    try cli_term.buf.insertSliceBefore(0, scrollback);
+                    cli_term.cursor_idx = scrollback.len;
+                    cli_term.grapheme_count = scrollback.len;
+                } else if (key.matches(vaxis.Key.down, .{}) and active == .lhs) {
+                    if (state.scrollback_offset != 0) state.scrollback_offset -= 1;
+                    if (state.scrollback_offset == 0 or state.scrollback.items.len == 0) {
+                        cli_term.clearRetainingCapacity();
+                        break :k;
+                    }
+                    const scrollback = state.scrollback.items[state.scrollback.items.len - state.scrollback_offset];
+
+                    cli_term.buf.clearRetainingCapacity();
+                    try cli_term.buf.insertSliceBefore(0, scrollback);
+                    cli_term.cursor_idx = scrollback.len;
+                    cli_term.grapheme_count = scrollback.len;
                 } else {
                     try cli_term.update(.{ .key_press = key });
                     switch (active) {
@@ -381,7 +432,7 @@ pub fn run(
             .process_command => |command| {
                 if (command.len > 0) {
                     try state.processCommand(&loop, &cli_text, command);
-                    cli_term.clearAndFree();
+                    cli_term.clearRetainingCapacity();
                 }
             },
             .quit => break,
@@ -517,6 +568,7 @@ const Command = enum {
 
     run,
     set,
+    step,
     remove,
     print,
 };

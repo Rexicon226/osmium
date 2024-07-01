@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 const std = @import("std");
-
 const cases = @import("tests/cases.zig");
 
 pub fn build(b: *std.Build) !void {
