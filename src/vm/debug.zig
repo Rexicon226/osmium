@@ -489,6 +489,7 @@ pub fn run(
             };
             _ = try writer.write(cli_text.items);
 
+            text_view.scroll_view.scroll.y = buffer.rows;
             text_view.draw(cli_text_box, buffer);
         }
 
