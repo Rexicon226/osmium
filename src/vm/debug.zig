@@ -553,7 +553,7 @@ pub fn run(
                         try writer.writeAll("To see Code Structure, setup a VM");
                     }
 
-                    _ = try text_writer.write(co_buffer.items);
+                    _ = try text_writer.write(try co_buffer.toOwnedSlice());
                 },
             }
 
