@@ -22,20 +22,28 @@ pub fn addCases(
 ) !void {
     parent_step.dependOn(&python.step);
 
+    const compare_tool = b.addExecutable(.{
+        .name = "compare",
+        .root_source_file = b.path("tools/compare.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+        .omit_frame_pointer = false, // we need the stack trace
+    });
+
     for (test_dirs) |dir| {
         const files = try getPyFilesInDir(b, b.fmt("tests/{s}", .{dir}), b.allocator);
         for (files) |file| {
-            parent_step.dependOn(addCase(b, target, file, osmium, python));
+            parent_step.dependOn(addCase(b, target, file, osmium, python, compare_tool));
         }
     }
 }
 
 fn addCase(
     b: *std.Build,
-    target: std.Build.ResolvedTarget,
     file_path: []const u8,
     osmium: *std.Build.Step.Compile,
     python: *std.Build.Step.Compile,
+    compare: *std.Build.Step.Compile,
 ) *std.Build.Step {
     const python_run = b.addRunArtifact(python);
     python_run.addArg(file_path);
@@ -48,15 +56,7 @@ fn addCase(
     osmium_run.addArg(file_path);
     const osmium_stdout = osmium_run.captureStdOut();
 
-    const compare_tool = b.addExecutable(.{
-        .name = "compare",
-        .root_source_file = b.path("tools/compare.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-        .omit_frame_pointer = false, // we need the stack trace
-    });
-
-    const compare_run = b.addRunArtifact(compare_tool);
+    const compare_run = b.addRunArtifact(compare);
     compare_run.addFileArg(osmium_stdout);
     compare_run.addFileArg(python_stdout);
     compare_run.expectExitCode(0);
