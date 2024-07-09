@@ -74,11 +74,17 @@ pub fn build(b: *std.Build) !void {
         }
     }
 
+    const libpython_install = b.addInstallDirectory(.{
+        .source_dir = cpython_dep.builder.dependency("python", .{}).path("Lib"),
+        .install_dir = .{ .custom = "python" },
+        .install_subdir = "Lib",
+    });
+    exe.step.dependOn(&libpython_install.step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 
     if (b.args) |args| run_cmd.addArgs(args);
-
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
@@ -86,8 +92,8 @@ pub fn build(b: *std.Build) !void {
     generateOpCode(b, opcode_step);
 
     const test_step = b.step("test", "Test Osmium");
-    try cases.addCases(b, exe, test_step);
-    // test_step.dependOn(&libpython_install.step);
+    try cases.addCases(b, target, test_step, exe, cpython_dep.artifact("cpython"));
+    test_step.dependOn(&libpython_install.step);
 }
 
 const TraceBackend = enum {
