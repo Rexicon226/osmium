@@ -307,7 +307,7 @@ fn execStoreName(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
     // NOTE: STORE_NAME does NOT pop the stack, it only stores the TOS.
     const tos = vm.stack.items[vm.stack.items.len - 1];
-    std.debug.print("STORE_NAME: {}\n", .{tos});
+    // std.debug.print("STORE_NAME: {}\n", .{tos});
     try vm.scopes.items[vm.depth].put(vm.allocator, name, tos);
 }
 
