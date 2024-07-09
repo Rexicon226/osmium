@@ -21,54 +21,58 @@ pub fn build(b: *std.Build) !void {
     });
     b.getInstallStep().dependOn(&exe_install.step);
 
+    const trace = b.option(
+        bool,
+        "trace",
+        "Enables tracing of the compiler using the default backend (spall)",
+    ) orelse false;
+    const backend: TraceBackend = bend: {
+        if (trace) {
+            break :bend b.option(
+                TraceBackend,
+                "trace-backend",
+                "Switch between what backend to use. None is default.",
+            ) orelse .None;
+        }
+        break :bend .None;
+    };
+
+    const use_llvm = b.option(bool, "use-llvm", "Uses llvm to compile Osmium. Default true.") orelse true;
+    exe.use_llvm = use_llvm;
+    exe.use_lld = use_llvm;
+
+    const enable_logging = b.option(bool, "log", "Enable debug logging.") orelse false;
+    const enable_debug_extensions = b.option(
+        bool,
+        "debug-extensions",
+        "Enable commands and options useful for debugging the compiler",
+    ) orelse (optimize == .Debug);
+
+    const enable_debug = b.option(bool, "debug", "Builds a VM debugger into the program") orelse false;
+
     const exe_options = b.addOptions();
+    exe_options.addOption(bool, "trace", trace);
+    exe_options.addOption(TraceBackend, "backend", backend);
+    exe_options.addOption(bool, "enable_logging", enable_logging);
+    exe_options.addOption(usize, "src_file_trimlen", std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?.len);
+    exe_options.addOption(bool, "enable_debug_extensions", enable_debug_extensions);
+    exe_options.addOption(bool, "build_debug", enable_debug);
+    exe_options.addOption([]const u8, "lib_path", "../python/Lib");
     exe.root_module.addOptions("options", exe_options);
-    {
-        const trace = b.option(
-            bool,
-            "trace",
-            "Enables tracing of the compiler using the default backend (spall)",
-        ) orelse false;
-        const backend: TraceBackend = bend: {
-            if (trace) {
-                break :bend b.option(
-                    TraceBackend,
-                    "trace-backend",
-                    "Switch between what backend to use. None is default.",
-                ) orelse .None;
-            }
-            break :bend .None;
-        };
-
-        const use_llvm = b.option(bool, "use-llvm", "Uses llvm to compile Osmium. Default true.") orelse true;
-        exe.use_llvm = use_llvm;
-        exe.use_lld = use_llvm;
-
-        const enable_logging = b.option(bool, "log", "Enable debug logging.") orelse false;
-        const enable_debug_extensions = b.option(
-            bool,
-            "debug-extensions",
-            "Enable commands and options useful for debugging the compiler",
-        ) orelse (optimize == .Debug);
-
-        exe_options.addOption(bool, "trace", trace);
-        exe_options.addOption(TraceBackend, "backend", backend);
-        exe_options.addOption(bool, "enable_logging", enable_logging);
-        exe_options.addOption(usize, "src_file_trimlen", std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?.len);
-        exe_options.addOption(bool, "enable_debug_extensions", enable_debug_extensions);
-    }
 
     const tracer_dep = b.dependency("tracer", .{ .optimize = optimize, .target = target });
     const libgc_dep = b.dependency("libgc", .{ .optimize = optimize, .target = target });
     const cpython_dep = b.dependency("cpython", .{ .optimize = optimize, .target = target });
-    const libvaxis = b.dependency("libvaxis", .{ .optimize = optimize, .target = target });
 
     exe.root_module.addImport("tracer", tracer_dep.module("tracer"));
     exe.root_module.addImport("gc", libgc_dep.module("gc"));
     exe.root_module.addImport("cpython", cpython_dep.module("cpython"));
-    exe.root_module.addImport("vaxis", libvaxis.module("vaxis"));
 
-    exe_options.addOption([]const u8, "lib_path", "../python/Lib");
+    if (enable_debug) {
+        if (b.lazyDependency("libvaxis", .{ .optimize = optimize, .target = target })) |libvaxis| {
+            exe.root_module.addImport("vaxis", libvaxis.module("vaxis"));
+        }
+    }
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("options");
 
 const Graph = @import("graph/Graph.zig");
 const Python = @import("frontend/Python.zig");
@@ -11,9 +12,7 @@ const Marshal = @import("compiler/Marshal.zig");
 const crash_report = @import("crash_report.zig");
 const Vm = @import("vm/Vm.zig");
 const Object = @import("vm/Object.zig");
-const debug = @import("vm/debug.zig");
-
-const build_options = @import("options");
+const debug = if (build_options.build_debug) @import("vm/debug.zig") else {};
 
 const tracer = @import("tracer");
 const tracer_backend = build_options.backend;
@@ -231,7 +230,7 @@ pub fn run_file(
         const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
         try vm.initBuiltinMods(source_file_path);
     }
-    if (options.run_debug) try debug.run(&vm, gc_allocator);
+    if (options.run_debug and build_options.build_debug) try debug.run(&vm, gc_allocator);
     if (options.run) try vm.run();
 
     main_log.debug("Run stats:", .{});
