@@ -33,7 +33,7 @@ pub fn addCases(
     for (test_dirs) |dir| {
         const files = try getPyFilesInDir(b, b.fmt("tests/{s}", .{dir}), b.allocator);
         for (files) |file| {
-            parent_step.dependOn(addCase(b, target, file, osmium, python, compare_tool));
+            parent_step.dependOn(addCase(b, file, osmium, python, compare_tool));
         }
     }
 }
