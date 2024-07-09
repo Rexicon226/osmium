@@ -57,8 +57,8 @@ pub fn build(b: *std.Build) !void {
     exe_options.addOption(usize, "src_file_trimlen", std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?.len);
     exe_options.addOption(bool, "enable_debug_extensions", enable_debug_extensions);
     exe_options.addOption(bool, "build_debug", enable_debug);
-    exe_options.addOption([]const u8, "lib_path", "../python/Lib");
     exe.root_module.addOptions("options", exe_options);
+    exe_options.addOption([]const u8, "lib_path", b.fmt("{s}/python/Lib", .{b.install_path}));
 
     const tracer_dep = b.dependency("tracer", .{ .optimize = optimize, .target = target });
     const libgc_dep = b.dependency("libgc", .{ .optimize = optimize, .target = target });
