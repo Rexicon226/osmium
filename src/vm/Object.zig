@@ -55,12 +55,21 @@ pub const Tag = enum(usize) {
 
     class,
 
-    pub fn PayloadType(comptime t: Tag) type {
+    /// Returns the data type of `t`.
+    ///
+    /// examples:
+    /// ```zig
+    /// int: BigIntMutable
+    /// string: []const u8
+    /// module: Payload.Module
+    /// ```
+    /// etc.
+    pub fn Data(comptime t: Tag) type {
         assert(@intFromEnum(t) >= Tag.first_payload);
 
         return switch (t) {
             .int => Payload.Int,
-            // .float,
+            .float => Payload.Float,
             .string => Payload.String,
 
             .tuple => Payload.Tuple,
@@ -81,16 +90,45 @@ pub const Tag = enum(usize) {
         };
     }
 
-    /// Allocates the payload type, which can be cast to the opaque pointer of the Object
-    pub fn allocate(
-        comptime t: Tag,
-        allocator: Allocator,
-        len: ?if (isInlinePtr(PtrData(t))) usize else void,
-    ) !PtrData(t) {
-        return switch (t) {
-            .tuple => try allocator.alloc(Object, len.?),
-            .string => try allocator.alloc(u8, len.?),
-            else => try allocator.create(Data(t)),
+    /// Returns the pointer representation of `t`.
+    ///
+    /// To give a bit more context, this is the type that should point at the majority of the
+    /// data we're carrying.
+    /// It should be `2 * usize` or less in size.
+    pub fn PtrData(comptime t: Tag) type {
+        const payload_ty = t.Data();
+        if (switch (t) {
+            .string, .tuple => true,
+            else => false,
+        }) {
+            assert(@bitSizeOf(payload_ty) <= 2 * @bitSizeOf(usize));
+            return payload_ty;
+        }
+        // no assert needed here, it'll obviously be a usize in size.
+        return *payload_ty;
+    }
+
+    /// Returns whether a payload type should be used "inline".
+    ///
+    /// Inline means the base type already contains references to the larger part of data.
+    ///
+    /// examples:
+    /// ```zig
+    /// []const u8
+    /// BigIntMutable
+    /// ```
+    ///
+    /// The `[]const u8` type, used for strings, already is a pointer to the string. This means
+    /// we don't need to carry a pointer to the slice, as it'd just be a second layer of indirection that doesn't
+    /// help anyone.
+    ///
+    /// Types like `BigIntMutable` also contain slices to the limbs, which take up the majority of the data. There
+    /// would be no need for a second layer of indirection there.
+    fn isInlinePtr(comptime tag: Tag) bool {
+        return switch (tag) {
+            .string => true,
+            .tuple => true,
+            else => false,
         };
     }
 
@@ -113,29 +151,35 @@ pub const Tag = enum(usize) {
     pub fn fromBool(comptime boolean: bool) Tag {
         return if (boolean) .bool_true else .bool_false;
     }
+
+    /// Allocates the `PtrData` type given the `allocator`.
+    ///
+    /// Caller needs to free it.
+    pub fn allocate(
+        comptime t: Tag,
+        allocator: Allocator,
+        len: ?if (t.isInlinePtr()) usize else void,
+    ) !PtrData(t) {
+        switch (t) {
+            .tuple => return allocator.alloc(Object, len.?),
+            .string => return allocator.alloc(u8, len.?),
+            else => {
+                assert(!t.isInlinePtr());
+                assert(len == null);
+
+                return allocator.create(Data(t));
+            },
+        }
+    }
 };
-
-pub fn Data(comptime t: Tag) type {
-    assert(@intFromEnum(t) >= Tag.first_payload);
-    return t.PayloadType();
-}
-
-pub fn PtrData(comptime t: Tag) type {
-    const payload_ty = t.PayloadType();
-    if (isInlinePtr(payload_ty)) return payload_ty;
-    return *payload_ty;
-}
-
-fn isInlinePtr(ty: type) bool {
-    const info = @typeInfo(ty);
-    if (info == .Pointer and info.Pointer.size == .Slice) return true;
-    return false;
-}
 
 var global_id: u32 = 0;
 pub var alive_map: std.AutoArrayHashMapUnmanaged(u32, bool) = .{};
 
-pub fn create(comptime t: Tag, allocator: Allocator, data: Data(t)) error{OutOfMemory}!Object {
+/// Allocates a new Object. In the future this function will perform checks on the current
+/// bytecode's ref mask to make sure it's doing the right thing. There shouldn't be any creations
+/// during a dealloc event for example.
+pub fn create(comptime t: Tag, allocator: Allocator, data: t.Data()) error{OutOfMemory}!Object {
     assert(@intFromEnum(t) >= Tag.first_payload);
 
     const new_id = global_id;
@@ -150,6 +194,9 @@ pub fn create(comptime t: Tag, allocator: Allocator, data: Data(t)) error{OutOfM
             return .{ .tag = t, .payload = .{ .double = payload_ptr }, .id = new_id };
         },
         else => {
+            // inline pointers should have their own setup code to avoid illegal initialization.
+            assert(!t.isInlinePtr());
+
             const ptr = try t.allocate(allocator, null);
             ptr.* = data;
             return .{ .tag = t, .payload = .{ .single = @ptrCast(ptr) }, .id = new_id };
@@ -157,6 +204,10 @@ pub fn create(comptime t: Tag, allocator: Allocator, data: Data(t)) error{OutOfM
     }
 }
 
+/// Creates an Object that has a well-defined size. Things like `None`, `True` and `False`
+/// don't need to slow down the program by allocating and are just statically known.
+///
+/// Accessing the payload of such an object is obviously illegal.
 pub fn init(comptime t: Tag) Object {
     assert(@intFromEnum(t) < Tag.first_payload);
     defer global_id += 1;
@@ -176,19 +227,20 @@ pub fn clone(object: *const Object, allocator: Allocator) CloneError!Object {
 
     const ptr: PayloadTy = switch (object.tag) {
         .none => unreachable,
-        .float => unreachable,
         .bool_true => unreachable,
         .bool_false => unreachable,
         inline .string, .tuple => |t| blk: {
             const old_mem = object.get(t);
             const new_ptr = try t.allocate(allocator, old_mem.len);
 
-            if (t == .tuple) {
-                for (new_ptr, old_mem) |*dst, src| {
-                    dst.* = try src.clone(allocator);
-                }
-            } else {
-                @memcpy(new_ptr, old_mem);
+            switch (t) {
+                .tuple => {
+                    for (new_ptr, old_mem) |*dst, src| {
+                        dst.* = try src.clone(allocator);
+                    }
+                },
+                .string => @memcpy(new_ptr, old_mem),
+                else => unreachable,
             }
 
             var payload_ptr: []void = undefined;
@@ -217,16 +269,16 @@ pub fn clone(object: *const Object, allocator: Allocator) CloneError!Object {
             break :blk .{ .single = @ptrCast(new_ptr) };
         },
         inline else => |tag| blk: {
-            const new_ptr = try allocator.create(Data(tag));
-            const old_ptr = object.get(tag);
-            new_ptr.* = old_ptr.*;
+            assert(!tag.isInlinePtr()); // inline ptr types should clone themselves
+
+            const new_ptr = try allocator.create(tag.Data());
+            new_ptr.* = object.get(tag).*;
             break :blk .{ .single = @ptrCast(new_ptr) };
         },
     };
     return .{ .tag = object.tag, .payload = ptr, .id = new_id };
 }
 
-// Deallocates the payload, but keeps the
 pub fn deinit(object: *Object, allocator: Allocator) void {
     const t = object.tag;
     if (@intFromEnum(t) < Tag.first_payload) return; // nothing to free
@@ -236,7 +288,6 @@ pub fn deinit(object: *Object, allocator: Allocator) void {
 
     switch (t) {
         .none => unreachable,
-        .float => unreachable,
         .bool_true => unreachable,
         .bool_false => unreachable,
         .tuple => {
@@ -251,8 +302,7 @@ pub fn deinit(object: *Object, allocator: Allocator) void {
             allocator.free(string);
         },
         inline else => |tag| {
-            // if it has a .deinit decl, we call that
-            const data_ty = Data(tag);
+            const data_ty = tag.Data();
             switch (@typeInfo(data_ty)) {
                 .Struct, .Enum, .Union => {
                     const payload = object.get(tag);
@@ -275,11 +325,11 @@ pub fn deinit(object: *Object, allocator: Allocator) void {
     object.* = undefined;
 }
 
-pub fn get(object: *const Object, comptime t: Tag) PtrData(t) {
+pub fn get(object: *const Object, comptime t: Tag) t.PtrData() {
     assert(@intFromEnum(t) >= Tag.first_payload);
     assert(object.tag == t);
-    const ptr_ty = PtrData(t);
-    if (comptime isInlinePtr(ptr_ty)) {
+    const ptr_ty = t.PtrData();
+    if (comptime t.isInlinePtr()) {
         const child_ty = @typeInfo(ptr_ty).Pointer.child;
         const many: [*]child_ty = @alignCast(@ptrCast(object.payload.double.ptr));
         return many[0..object.payload.double.len];
@@ -364,6 +414,7 @@ pub fn ident(object: *const Object) []const u8 {
 
 pub const Payload = union(enum) {
     int: Int,
+    float: Float,
     string: String,
     zig_func: ZigFunc,
     tuple: Tuple,
@@ -374,6 +425,7 @@ pub const Payload = union(enum) {
     class: Class,
 
     pub const Int = BigIntManaged;
+    pub const Float = f64;
     pub const String = []u8;
 
     pub const MemberFuncTy = []const struct {
@@ -566,6 +618,10 @@ pub fn format(
         .int => {
             const int = object.get(.int);
             try writer.print("{}", .{int.*});
+        },
+        .float => {
+            const float = object.get(.float).*;
+            try writer.print("{d:.1}", .{float});
         },
         .string => {
             const string = object.get(.string);

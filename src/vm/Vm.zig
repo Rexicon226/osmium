@@ -184,14 +184,97 @@ fn exec(vm: *Vm, inst: Instruction) !void {
     const t = tracer.trace(@src(), "{s}", .{@tagName(inst.op)});
     defer t.end();
 
+    // https://docs.python.org/3.10/library/dis.html
     switch (inst.op) {
+        // zig fmt: off
+
+        // General Instructions
+        .NOP         => {},
+        .POP_TOP     => try vm.execPopTop(),
+        .ROT_TWO     => try vm.execRotTwo(),
+        .ROT_THREE   => @panic("TODO"),
+        .ROT_FOUR    => @panic("TODO"),
+        .DUP_TOP     => @panic("TODO"),
+        .DUP_TOP_TWO => @panic("TODO"),
+
+        // Unary Operations
+        .UNARY_POSITIVE      => @panic("TODO"),
+        .UNARY_NEGATIVE      => @panic("TODO"),
+        .UNARY_NOT           => @panic("TODO"),
+        .UNARY_INVERT        => @panic("TODO"),
+        .GET_ITER            => @panic("TODO"),
+        .GET_YIELD_FROM_ITER => @panic("TODO"),
+
+        // Binary Operations
+        .BINARY_POWER           => @panic("TODO"),
+        .BINARY_MULTIPLY        => try vm.execBinaryOperation(.mul),
+        .BINARY_MATRIX_MULTIPLY => @panic("TODO"),
+        .BINARY_FLOOR_DIVIDE    => @panic("TODO"),
+        .BINARY_TRUE_DIVIDE     => @panic("TODO"),
+        .BINARY_MODULO          => @panic("TODO"),
+        .BINARY_ADD             => try vm.execBinaryOperation(.add),
+        .BINARY_SUBTRACT        => try vm.execBinaryOperation(.sub),
+        .BINARY_SUBSCR          => try vm.execBinarySubscr(),
+        .BINARY_LSHIFT          => @panic("TODO"),
+        .BINARY_RSHIFT          => @panic("TODO"),
+        .BINARY_AND             => @panic("TODO"),
+        .BINARY_XOR             => @panic("TODO"),
+        .BINARY_OR              => @panic("TODO"),
+
+        // Inplace Operations
+        .INPLACE_POWER           => @panic("TODO"),
+        .INPLACE_MULTIPLY        => @panic("TODO"),
+        .INPLACE_MATRIX_MULTIPLY => @panic("TODO"),
+        .INPLACE_FLOOR_DIVIDE    => @panic("TODO"),
+        .INPLACE_TRUE_DIVIDE     => @panic("TODO"),
+        .INPLACE_MODULO          => @panic("TODO"),
+        .INPLACE_ADD             => try vm.execBinaryOperation(.add),
+        .INPLACE_SUBTRACT        => try vm.execBinaryOperation(.sub),
+        .INPLACE_LSHIFT          => @panic("TODO"),
+        .INPLACE_RSHIFT          => @panic("TODO"),
+        .INPLACE_AND             => @panic("TODO"),
+        .INPLACE_XOR             => @panic("TODO"),
+        .INPLACE_OR              => @panic("TODO"),
+        .STORE_SUBSCR            => try vm.execStoreSubScr(),
+        .DELETE_SUBSCR           => @panic("TODO"),
+
+        // Coroutine Opcodes
+        .GET_AWAITABLE     => @panic("TODO"),
+        .GET_AITER         => @panic("TODO"),
+        .GET_ANEXT         => @panic("TODO"),
+        .END_ASYNC_FOR     => @panic("TODO"),
+        .BEFORE_ASYNC_WITH => @panic("TODO"),
+        .SETUP_ASYNC_WITH  => @panic("TODO"),
+
+        // Miscellaneous opcodes
+        .PRINT_EXPR             => @panic("TODO"),
+        .SET_ADD                => @panic("TODO"),
+        .LIST_APPEND            => @panic("TODO"),
+        .MAP_ADD                => @panic("TODO"),
+        .RETURN_VALUE           => try vm.execReturnValue(),
+        .YIELD_VALUE            => @panic("TODO"),
+        .YIELD_FROM             => @panic("TODO"),
+        .SETUP_ANNOTATIONS      => @panic("TODO"),
+        .IMPORT_STAR             => @panic("TODO"),
+        .POP_BLOCK              => @panic("TODO"),
+        .POP_EXCEPT             => @panic("TODO"),
+        .RERAISE                => @panic("TODO"),
+        .WITH_EXCEPT_START      => @panic("TODO"),
+        .LOAD_ASSERTION_ERROR   => @panic("TODO"),
+        .LOAD_BUILD_CLASS       => try vm.execLoadBuildClass(),
+        .SETUP_WITH             => @panic("TODO"),
+        .COPY_DICT_WITHOUT_KEYS => @panic("TODO"),
+        .GET_LEN                => @panic("TODO"),
+        .MATCH_MAPPING          => @panic("TODO"),
+        .MATCH_SEQUENCE         => @panic("TODO"),
+        .MATCH_KEYS             => @panic("TODO"),
+
         .LOAD_CONST => try vm.execLoadConst(inst),
         .LOAD_NAME => try vm.execLoadName(inst),
         .LOAD_METHOD => try vm.execLoadMethod(inst),
         .LOAD_GLOBAL => try vm.execLoadGlobal(inst),
         .LOAD_FAST => try vm.execLoadFast(inst),
         .LOAD_ATTR => try vm.execLoadAttr(inst),
-        .LOAD_BUILD_CLASS => try vm.execLoadBuildClass(),
 
         .BUILD_LIST => try vm.execBuildList(inst),
         .BUILD_TUPLE => try vm.execBuildTuple(inst),
@@ -200,28 +283,16 @@ fn exec(vm: *Vm, inst: Instruction) !void {
         .LIST_EXTEND => try vm.execListExtend(inst),
 
         .STORE_NAME => try vm.execStoreName(inst),
-        .STORE_SUBSCR => try vm.execStoreSubScr(),
         .STORE_FAST => try vm.execStoreFast(inst),
         .STORE_GLOBAL => try vm.execStoreGlobal(inst),
 
         .SET_UPDATE => try vm.execSetUpdate(inst),
 
-        .RETURN_VALUE => try vm.execReturnValue(),
 
-        .ROT_TWO => try vm.execRotTwo(),
-
-        .NOP => {},
-
-        .POP_TOP => try vm.execPopTop(),
         .POP_JUMP_IF_TRUE => try vm.execPopJump(inst, true),
         .POP_JUMP_IF_FALSE => try vm.execPopJump(inst, false),
 
-        .JUMP_FORWARD => try vm.execJumpForward(inst),
-
-        .INPLACE_ADD, .BINARY_ADD => try vm.execBinaryOperation(.add),
-        .INPLACE_SUBTRACT, .BINARY_SUBTRACT => try vm.execBinaryOperation(.sub),
-        .INPLACE_MULTIPLY, .BINARY_MULTIPLY => try vm.execBinaryOperation(.mul),
-        .BINARY_SUBSCR => try vm.execBinarySubscr(),
+        .JUMP_FORWARD => try vm.execJumpForward(inst),       
 
         .COMPARE_OP => try vm.execCompareOperation(inst),
 
@@ -238,6 +309,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 
         .JUMP_ABSOLUTE => vm.co.index = inst.extra,
 
+        // zig fmt: on
         else => std.debug.panic("TODO: {s}", .{@tagName(inst.op)}),
     }
 }
@@ -252,7 +324,6 @@ fn execLoadName(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
     const val = vm.lookUpwards(name) orelse
         vm.fail("couldn't find '{s}'", .{name});
-    log.debug("load name: {}", .{val});
     try vm.stack.append(vm.allocator, val);
 }
 
@@ -476,22 +547,33 @@ fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
     const y = vm.stack.pop();
     const x = vm.stack.pop();
 
-    assert(x.tag == .int);
-    assert(y.tag == .int);
+    assert(x.tag == y.tag);
 
-    const x_int = x.get(.int);
-    const y_int = y.get(.int);
+    const result_val = switch (x.tag) {
+        .int => int: {
+            const x_int = x.get(.int);
+            const y_int = y.get(.int);
 
-    var result = try BigIntManaged.init(vm.allocator);
+            var result = try BigIntManaged.init(vm.allocator);
 
-    switch (op) {
-        .add => try result.add(x_int, y_int),
-        .sub => try result.sub(x_int, y_int),
-        .mul => try result.mul(x_int, y_int),
-        // TODO: more
-    }
+            switch (op) {
+                .add => try result.add(x_int, y_int),
+                .sub => try result.sub(x_int, y_int),
+                .mul => try result.mul(x_int, y_int),
+                // TODO: more
+            }
 
-    const result_val = try vm.createObject(.int, result);
+            break :int try vm.createObject(.int, result);
+        },
+        .float => float: {
+            const x_float = x.get(.float).*;
+            const y_float = y.get(.float).*;
+
+            break :float try vm.createObject(.float, x_float + y_float);
+        },
+        else => unreachable,
+    };
+
     try vm.stack.append(vm.allocator, result_val);
 }
 
@@ -722,13 +804,11 @@ fn execImportFrom(vm: *Vm, inst: Instruction) !void {
 /// Caller owns the slice.
 fn popNObjects(vm: *Vm, n: usize) ![]Object {
     const objects = try vm.allocator.alloc(Object, n);
-
     for (0..n) |i| {
         const tos = vm.stack.pop();
         const index = n - i - 1;
         objects[index] = tos;
     }
-
     return objects;
 }
 
@@ -737,8 +817,6 @@ fn popNObjects(vm: *Vm, n: usize) ![]Object {
 /// Looks at current scope -> builtins -> rest to up index 1, for what I think is the hottest paths.
 fn lookUpwards(vm: *Vm, name: []const u8) ?Object {
     const scopes = vm.scopes.items;
-
-    log.debug("lookUpwards depth {}", .{vm.depth});
 
     return obj: {
         // Check the immediate scope.
@@ -756,8 +834,7 @@ fn lookUpwards(vm: *Vm, name: []const u8) ?Object {
 
         // Now we just search upwards from vm.depth -> scopes[1] (as we already searched global)
         for (1..vm.depth) |i| {
-            const index = vm.depth - i;
-            if (scopes[index].get(name)) |val| {
+            if (scopes[vm.depth - i].get(name)) |val| {
                 break :obj val;
             }
         }
@@ -769,7 +846,7 @@ fn lookUpwards(vm: *Vm, name: []const u8) ?Object {
 pub fn createObject(
     vm: *Vm,
     comptime tag: Object.Tag,
-    data: ?(if (@intFromEnum(tag) >= Object.Tag.first_payload) Object.Data(tag) else void),
+    data: ?(if (@intFromEnum(tag) >= Object.Tag.first_payload) tag.Data() else void),
 ) error{OutOfMemory}!Object {
     const has_payload = @intFromEnum(tag) >= Object.Tag.first_payload;
     if (data == null and has_payload)

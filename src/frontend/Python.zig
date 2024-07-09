@@ -90,6 +90,7 @@ pub fn Initialize(
         build_options.lib_path,
         allocator,
     );
+    defer allocator.free(utf32_path);
 
     config.module_search_paths_set = 1;
     _ = externs.PyWideStringList_Append(

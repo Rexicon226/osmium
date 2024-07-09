@@ -161,12 +161,17 @@ fn readObject(marshal: *Marshal) Error!Object {
             const tuple_obj = try Object.create(.tuple, allocator, objects);
             break :tuple tuple_obj;
         },
-
         .TYPE_REF => ref: {
             const index = marshal.readLong(false);
             try marshal.references.append(allocator, .{ .byte = marshal.cursor, .index = index });
             marshal.flag_refs.items[index].?.usages += 1;
             break :ref try marshal.flag_refs.items[index].?.content.clone(allocator);
+        },
+        .TYPE_BINARY_FLOAT => float: {
+            const bytes = marshal.readBytes(8);
+            const float: f64 = @bitCast(bytes[0..8].*);
+            const float_obj = try Object.create(.float, allocator, float);
+            break :float float_obj;
         },
         else => std.debug.panic("TODO: marshal.readObject {s}", .{@tagName(ty)}),
     };

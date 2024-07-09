@@ -6,7 +6,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("options");
 
-const Graph = @import("graph/Graph.zig");
+const Graph = @import("analysis/Graph.zig");
+const RefMask = @import("analysis/RefMask.zig");
+
 const Python = @import("frontend/Python.zig");
 const Marshal = @import("compiler/Marshal.zig");
 const crash_report = @import("crash_report.zig");
@@ -84,7 +86,7 @@ pub fn main() !u8 {
         @panic("osmium doesn't support non-libc compilations yet");
     };
     defer {
-        _ = gpa.deinit();
+        if (gpa.deinit() == .leak) @panic("leaked"); // it should fail for tests
 
         if (tracer_backend != .None) {
             tracer.deinit();
@@ -162,6 +164,7 @@ fn usage() void {
         \\  --no-run      Doesn't run the VM, useful for debugging Osmium
         \\  --graph,      Creates a "graph.bin" which contains CFG information
         \\  --debug,      Runs a interactable debug mode to debug the VM
+        \\
     ;
 
     const stdout = std.io.getStdOut().writer();
@@ -173,7 +176,7 @@ fn usage() void {
 fn versionPrint() void {
     const stdout = std.io.getStdOut().writer();
 
-    stdout.print("Osmium {s}, created by David Rubin\n", .{version}) catch |err| {
+    stdout.print("Osmium {s}\n", .{version}) catch |err| {
         fatal("Failed to print version: {s}\n", .{@errorName(err)});
     };
 }
@@ -191,6 +194,13 @@ pub fn run_file(
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
+    const gc_allocator = gc.allocator();
+    gc.enable();
+    gc.setFindLeak(build_options.enable_logging);
+    defer gc.collect();
+
+    var start_timer = try std.time.Timer.start();
+
     const source_file = std.fs.cwd().openFile(file_name, .{ .lock = .exclusive }) catch |err| {
         switch (err) {
             error.FileNotFound => @panic("invalid file provided"),
@@ -202,11 +212,6 @@ pub fn run_file(
     const source = try source_file.readToEndAllocOptions(allocator, source_file_size, source_file_size, @alignOf(u8), 0);
     defer allocator.free(source);
 
-    const gc_allocator = gc.allocator();
-    gc.enable();
-    gc.setFindLeak(build_options.enable_logging);
-    defer gc.collect();
-
     const pyc = try Python.parse(source, file_name, gc_allocator);
     defer gc_allocator.free(pyc);
 
@@ -215,22 +220,31 @@ pub fn run_file(
     defer marshal.deinit();
 
     const seed = try marshal.parse();
+    var graph = try Graph.evaluate(gc_allocator, seed);
+    defer graph.deinit();
+
+    // var ref_mask = RefMask.evaluate(gc_allocator, seed, graph);
+    // defer ref_mask.deinit();
+
+    // if (true) std.posix.exit(1);
 
     if (options.make_graph) {
-        var graph = try Graph.evaluate(gc_allocator, seed);
-        defer graph.deinit();
-
         try graph.dump();
     }
 
     var vm = try Vm.init(gc_allocator, seed);
     defer vm.deinit();
     {
+        // TODO: audit this
         var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
         try vm.initBuiltinMods(source_file_path);
     }
     if (options.run_debug and build_options.build_debug) try debug.run(&vm, gc_allocator);
+
+    const elapsed_time = start_timer.read();
+    main_log.debug("Setup Time: {d}ms", .{elapsed_time / std.time.ns_per_ms});
+
     if (options.run) try vm.run();
 
     main_log.debug("Run stats:", .{});
