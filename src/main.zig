@@ -6,7 +6,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("options");
 
-const Graph = @import("graph/Graph.zig");
+const Graph = @import("analysis/Graph.zig");
+const RefMask = @import("analysis/RefMask.zig");
+
 const Python = @import("frontend/Python.zig");
 const Marshal = @import("compiler/Marshal.zig");
 const crash_report = @import("crash_report.zig");
@@ -75,7 +77,7 @@ const Args = struct {
 };
 
 pub fn main() !u8 {
-    crash_report.initialize();
+    // crash_report.initialize();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 16 }){};
     const allocator = blk: {
@@ -84,7 +86,7 @@ pub fn main() !u8 {
         @panic("osmium doesn't support non-libc compilations yet");
     };
     defer {
-        _ = gpa.deinit();
+        if (gpa.deinit() == .leak) @panic("leaked"); // it should fail for tests
 
         if (tracer_backend != .None) {
             tracer.deinit();
@@ -140,7 +142,7 @@ pub fn main() !u8 {
     }
 
     if (file_path) |path| {
-        try run_file(allocator, path, options);
+        try runFile(allocator, path, options);
         return 0;
     }
 
@@ -162,6 +164,7 @@ fn usage() void {
         \\  --no-run      Doesn't run the VM, useful for debugging Osmium
         \\  --graph,      Creates a "graph.bin" which contains CFG information
         \\  --debug,      Runs a interactable debug mode to debug the VM
+        \\
     ;
 
     const stdout = std.io.getStdOut().writer();
@@ -173,7 +176,7 @@ fn usage() void {
 fn versionPrint() void {
     const stdout = std.io.getStdOut().writer();
 
-    stdout.print("Osmium {s}, created by David Rubin\n", .{version}) catch |err| {
+    stdout.print("Osmium {s}\n", .{version}) catch |err| {
         fatal("Failed to print version: {s}\n", .{@errorName(err)});
     };
 }
@@ -183,13 +186,18 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.posix.exit(1);
 }
 
-pub fn run_file(
+pub fn runFile(
     allocator: std.mem.Allocator,
     file_name: [:0]const u8,
     options: Args,
 ) !void {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
+
+    // const gc_allocator = gc.allocator();
+    // gc.enable();
+    // gc.setFindLeak(build_options.enable_logging);
+    // defer gc.collect();
 
     const source_file = std.fs.cwd().openFile(file_name, .{ .lock = .exclusive }) catch |err| {
         switch (err) {
@@ -202,40 +210,48 @@ pub fn run_file(
     const source = try source_file.readToEndAllocOptions(allocator, source_file_size, source_file_size, @alignOf(u8), 0);
     defer allocator.free(source);
 
-    const gc_allocator = gc.allocator();
-    gc.enable();
-    gc.setFindLeak(build_options.enable_logging);
-    defer gc.collect();
+    const pyc = try Python.parse(source, file_name, allocator);
+    defer allocator.free(pyc);
 
-    const pyc = try Python.parse(source, file_name, gc_allocator);
-    defer gc_allocator.free(pyc);
-
-    var marshal = try Marshal.init(gc_allocator, pyc);
-    defer Object.alive_map.deinit(gc_allocator);
+    var marshal = try Marshal.init(allocator, pyc);
+    // defer Object.alive_map.deinit(gc_allocator);
     defer marshal.deinit();
 
+    _ = options;
+
     const seed = try marshal.parse();
+    _ = seed;
 
-    if (options.make_graph) {
-        var graph = try Graph.evaluate(gc_allocator, seed);
-        defer graph.deinit();
+    // var graph = try Graph.evaluate(gc_allocator, seed);
+    // defer graph.deinit();
 
-        try graph.dump();
-    }
+    // var ref_mask = RefMask.evaluate(gc_allocator, seed, graph);
+    // defer ref_mask.deinit();
 
-    var vm = try Vm.init(gc_allocator, seed);
-    defer vm.deinit();
-    {
-        var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
-        try vm.initBuiltinMods(source_file_path);
-    }
-    if (options.run_debug and build_options.build_debug) try debug.run(&vm, gc_allocator);
-    if (options.run) try vm.run();
+    // if (true) std.posix.exit(1);
 
-    main_log.debug("Run stats:", .{});
-    main_log.debug(
-        "GC Heap Size: {}",
-        .{std.fmt.fmtIntSizeDec(gc.getHeapSize())},
-    );
+    // if (options.make_graph) {
+    //     try graph.dump();
+    // }
+
+    // var vm = try Vm.init(gc_allocator, seed);
+    // defer vm.deinit();
+    // {
+    //     // TODO: audit this
+    //     var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    //     const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
+    //     try vm.initBuiltinMods(source_file_path);
+    // }
+    // if (options.run_debug and build_options.build_debug) try debug.run(&vm, gc_allocator);
+
+    // const elapsed_time = start_timer.read();
+    // main_log.debug("Setup Time: {d}ms", .{elapsed_time / std.time.ns_per_ms});
+
+    // if (options.run) try vm.run();
+
+    // main_log.debug("Run stats:", .{});
+    // main_log.debug(
+    //     "GC Heap Size: {}",
+    //     .{std.fmt.fmtIntSizeDec(gc.getHeapSize())},
+    // );
 }

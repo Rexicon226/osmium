@@ -45,7 +45,7 @@ fn format2(
     std.debug.assert(unused_fmt_bytes.len == 0);
 
     const inst = ctx.inst;
-    const co = ctx.co;
+    // const co = ctx.co;
 
     const extra = inst.extra;
 
@@ -56,23 +56,23 @@ fn format2(
     if (@intFromEnum(inst.op) < 90) return;
 
     switch (inst.op) {
-        .LOAD_CONST,
-        => try writer.print("{d} ({})", .{ extra, co.getConst(extra) }),
-        .LOAD_NAME,
-        .STORE_NAME,
-        .IMPORT_NAME,
-        .LOAD_METHOD,
-        => try writer.print("{d} ({s})", .{ extra, co.getName(extra) }),
-        .CALL_FUNCTION,
-        .CALL_METHOD,
-        => try writer.print("{d}", .{extra}),
-        .MAKE_FUNCTION,
-        => {
-            const ty: Object.Payload.PythonFunction.ArgType = @enumFromInt(extra);
-            try writer.print("{s}", .{@tagName(ty)});
-        },
-        .BUILD_TUPLE,
-        => try writer.print("({d})", .{extra}),
+        // .LOAD_CONST,
+        // => try writer.print("{d} ({})", .{ extra, co.getConst(extra) }),
+        // .LOAD_NAME,
+        // .STORE_NAME,
+        // .IMPORT_NAME,
+        // .LOAD_METHOD,
+        // => try writer.print("{d} ({s})", .{ extra, co.getName(extra) }),
+        // .CALL_FUNCTION,
+        // .CALL_METHOD,
+        // => try writer.print("{d}", .{extra}),
+        // // .MAKE_FUNCTION,
+        // // => {
+        // //     const ty: Object.Payload.PythonFunction.ArgType = @enumFromInt(extra);
+        // //     try writer.print("{s}", .{@tagName(ty)});
+        // // },
+        // .BUILD_TUPLE,
+        // => try writer.print("({d})", .{extra}),
         else => try writer.print("TODO payload {d}", .{extra}),
     }
 }

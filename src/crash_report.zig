@@ -128,7 +128,7 @@ pub fn print_co(writer: anytype, data: struct { co: CodeObject, index: ?usize })
 
     try writer.print("{}", .{co});
 
-    const instructions = co.instructions.?; // should have already been processed
+    const instructions = co.instructions; // should have already been processed
     try writer.writeAll("Instructions:\n");
     for (instructions, 0..) |inst, i| {
         if (maybe_index) |index| if (index == i) try writer.print("(#{d}) -> ", .{index});
@@ -140,13 +140,13 @@ pub fn print_co(writer: anytype, data: struct { co: CodeObject, index: ?usize })
 var buffer: [10 * 1024]u8 = undefined;
 
 fn dumpObjectTrace() !void {
-    var fba = std.heap.FixedBufferAllocator.init(&buffer);
-    const allocator = fba.allocator();
+    // var fba = std.heap.FixedBufferAllocator.init(&buffer);
+    // const allocator = fba.allocator();
     const state = vm_state orelse return;
     const stderr = io.getStdErr().writer();
 
-    var current_co = state.current_co;
-    try current_co.process(allocator);
+    const current_co = state.current_co;
+    // try current_co.process(allocator);
 
     try print_co(stderr, .{
         .co = current_co,
