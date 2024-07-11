@@ -77,7 +77,7 @@ const Args = struct {
 };
 
 pub fn main() !u8 {
-    crash_report.initialize();
+    // crash_report.initialize();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 16 }){};
     const allocator = blk: {
@@ -142,7 +142,7 @@ pub fn main() !u8 {
     }
 
     if (file_path) |path| {
-        try run_file(allocator, path, options);
+        try runFile(allocator, path, options);
         return 0;
     }
 
@@ -186,7 +186,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.posix.exit(1);
 }
 
-pub fn run_file(
+pub fn runFile(
     allocator: std.mem.Allocator,
     file_name: [:0]const u8,
     options: Args,
@@ -194,12 +194,10 @@ pub fn run_file(
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
-    const gc_allocator = gc.allocator();
-    gc.enable();
-    gc.setFindLeak(build_options.enable_logging);
-    defer gc.collect();
-
-    var start_timer = try std.time.Timer.start();
+    // const gc_allocator = gc.allocator();
+    // gc.enable();
+    // gc.setFindLeak(build_options.enable_logging);
+    // defer gc.collect();
 
     const source_file = std.fs.cwd().openFile(file_name, .{ .lock = .exclusive }) catch |err| {
         switch (err) {
@@ -212,44 +210,48 @@ pub fn run_file(
     const source = try source_file.readToEndAllocOptions(allocator, source_file_size, source_file_size, @alignOf(u8), 0);
     defer allocator.free(source);
 
-    const pyc = try Python.parse(source, file_name, gc_allocator);
-    defer gc_allocator.free(pyc);
+    const pyc = try Python.parse(source, file_name, allocator);
+    defer allocator.free(pyc);
 
-    var marshal = try Marshal.init(gc_allocator, pyc);
-    defer Object.alive_map.deinit(gc_allocator);
+    var marshal = try Marshal.init(allocator, pyc);
+    // defer Object.alive_map.deinit(gc_allocator);
     defer marshal.deinit();
 
+    _ = options;
+
     const seed = try marshal.parse();
-    var graph = try Graph.evaluate(gc_allocator, seed);
-    defer graph.deinit();
+    _ = seed;
+
+    // var graph = try Graph.evaluate(gc_allocator, seed);
+    // defer graph.deinit();
 
     // var ref_mask = RefMask.evaluate(gc_allocator, seed, graph);
     // defer ref_mask.deinit();
 
     // if (true) std.posix.exit(1);
 
-    if (options.make_graph) {
-        try graph.dump();
-    }
+    // if (options.make_graph) {
+    //     try graph.dump();
+    // }
 
-    var vm = try Vm.init(gc_allocator, seed);
-    defer vm.deinit();
-    {
-        // TODO: audit this
-        var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
-        try vm.initBuiltinMods(source_file_path);
-    }
-    if (options.run_debug and build_options.build_debug) try debug.run(&vm, gc_allocator);
+    // var vm = try Vm.init(gc_allocator, seed);
+    // defer vm.deinit();
+    // {
+    //     // TODO: audit this
+    //     var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    //     const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
+    //     try vm.initBuiltinMods(source_file_path);
+    // }
+    // if (options.run_debug and build_options.build_debug) try debug.run(&vm, gc_allocator);
 
-    const elapsed_time = start_timer.read();
-    main_log.debug("Setup Time: {d}ms", .{elapsed_time / std.time.ns_per_ms});
+    // const elapsed_time = start_timer.read();
+    // main_log.debug("Setup Time: {d}ms", .{elapsed_time / std.time.ns_per_ms});
 
-    if (options.run) try vm.run();
+    // if (options.run) try vm.run();
 
-    main_log.debug("Run stats:", .{});
-    main_log.debug(
-        "GC Heap Size: {}",
-        .{std.fmt.fmtIntSizeDec(gc.getHeapSize())},
-    );
+    // main_log.debug("Run stats:", .{});
+    // main_log.debug(
+    //     "GC Heap Size: {}",
+    //     .{std.fmt.fmtIntSizeDec(gc.getHeapSize())},
+    // );
 }

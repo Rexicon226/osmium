@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: GPL-3.0-only
 
-/// Object types
 pub const ObjType = enum(u8) {
     TYPE_NULL = '0',
     TYPE_NONE = 'N',

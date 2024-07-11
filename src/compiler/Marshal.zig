@@ -26,7 +26,7 @@ const Reference = struct { byte: usize, index: usize };
 const FlagRef = struct {
     byte: usize,
     usages: usize = 0,
-    content: Object,
+    content: *const Object,
 };
 
 py_version: PythonVersion,
@@ -37,6 +37,8 @@ flag_refs: std.ArrayListUnmanaged(?FlagRef) = .{},
 cursor: usize,
 bytes: []const u8,
 allocator: std.mem.Allocator,
+
+pool: std.ArrayListUnmanaged(*const Object) = .{},
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -57,20 +59,43 @@ pub fn init(
 }
 
 pub fn deinit(marshal: *Marshal) void {
-    marshal.flag_refs.deinit(marshal.allocator);
-    marshal.references.deinit(marshal.allocator);
-    marshal.allocator.free(marshal.bytes);
+    const allocator = marshal.allocator;
+
+    for (marshal.pool.items) |obj| {
+        if (@intFromPtr(obj) <= 0x30) continue;
+
+        std.debug.print("obj: {*}\n", .{obj});
+        switch (obj.tag) {
+            .tuple => {}, // tuple's objects are stored in the pool elsewhere
+            .codeobject => {},
+            else => obj.deinit(allocator),
+        }
+    }
+
+    marshal.pool.deinit(allocator);
+    marshal.flag_refs.deinit(allocator);
+    marshal.references.deinit(allocator);
+    allocator.free(marshal.bytes);
     marshal.* = undefined;
 }
 
-pub fn parse(marshal: *Marshal) !CodeObject {
+/// The return of this function is only valid until the next `createObject` call.
+fn createObject(marshal: *Marshal, comptime tag: Object.Tag, data: anytype) !*const Object {
+    const object = if (@intFromEnum(tag) < Object.Tag.first_payload) blk: {
+        break :blk Object.init(tag);
+    } else try Object.create(tag, marshal.allocator, data);
+    std.debug.print("creating: {*} {s}\n", .{ object, @tagName(tag) });
+    try marshal.pool.append(marshal.allocator, object);
+    return object;
+}
+
+pub fn parse(marshal: *Marshal) !*const CodeObject {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
     var co_obj = try marshal.readObject();
     const co = co_obj.get(.codeobject);
-    defer co_obj.deinit(marshal.allocator);
-    return co.clone(marshal.allocator);
+    return &co.value;
 }
 
 fn readSingleString(marshal: *Marshal) ![]const u8 {
@@ -87,7 +112,6 @@ fn readSingleString(marshal: *Marshal) ![]const u8 {
     }
 
     const ty: ObjType = @enumFromInt(next_byte);
-    log.debug("readSingleString {s}", .{@tagName(ty)});
     const string: []u8 = switch (ty) {
         .TYPE_SHORT_ASCII_INTERNED,
         .TYPE_SHORT_ASCII,
@@ -99,7 +123,7 @@ fn readSingleString(marshal: *Marshal) ![]const u8 {
             marshal.flag_refs.items[index].?.usages += 1;
             const ref_obj = marshal.flag_refs.items[index].?.content;
             const ref_string = ref_obj.get(.string);
-            break :ref try allocator.dupe(u8, ref_string);
+            break :ref try allocator.dupe(u8, ref_string.value);
         },
         else => std.debug.panic("TODO: readSingleString {s}", .{@tagName(ty)}),
     };
@@ -107,14 +131,14 @@ fn readSingleString(marshal: *Marshal) ![]const u8 {
     if (ref_id) |id| {
         marshal.flag_refs.items[id] = .{
             .byte = marshal.cursor,
-            .content = try Object.create(.string, allocator, string),
+            .content = try marshal.createObject(.string, .{ .value = try allocator.dupe(u8, string) }),
         };
     }
 
     return string;
 }
 
-fn readObject(marshal: *Marshal) Error!Object {
+fn readObject(marshal: *Marshal) Error!*const Object {
     const t = tracer.trace(@src(), "", .{});
     defer t.end();
 
@@ -130,49 +154,51 @@ fn readObject(marshal: *Marshal) Error!Object {
     }
 
     const ty: ObjType = @enumFromInt(next_byte);
-    log.debug("readObject {s}", .{@tagName(ty)});
-    const object: Object = switch (ty) {
-        .TYPE_NONE => Object.init(.none),
+    const object: *const Object = switch (ty) {
+        .TYPE_NONE => try marshal.createObject(.none, null),
         .TYPE_CODE => code: {
             const code = try marshal.readCodeObject();
-            break :code try Object.create(.codeobject, allocator, code);
+            break :code try marshal.createObject(.codeobject, .{ .value = code });
         },
 
-        .TYPE_STRING => try Object.create(.string, allocator, try marshal.readString(.{})),
+        // .TYPE_STRING => try marshal.createObject(.string, try marshal.readString(.{})),
 
         .TYPE_SHORT_ASCII_INTERNED,
         .TYPE_SHORT_ASCII,
-        => try Object.create(.string, allocator, try marshal.readString(.{ .short = true })),
+        => string: {
+            const string = try marshal.readString(.{ .short = true });
+            break :string try marshal.createObject(.string, .{ .value = string });
+        },
 
         .TYPE_INT => int: {
             const new_int = try BigIntManaged.initSet(allocator, marshal.readLong(true));
-            break :int try Object.create(.int, allocator, new_int);
+            break :int try marshal.createObject(.int, .{ .value = new_int });
         },
 
-        .TYPE_TRUE => Object.init(.bool_true),
-        .TYPE_FALSE => Object.init(.bool_false),
+        // .TYPE_TRUE => try marshal.createObject(.bool_true, null),
+        // .TYPE_FALSE => try marshal.createObject(.bool_false, null),
 
         .TYPE_SMALL_TUPLE => tuple: {
             const size = marshal.readBytes(1)[0];
-            const objects = try allocator.alloc(Object, size);
+            const objects = try marshal.allocator.alloc(*const Object, size);
             for (objects) |*object| {
                 object.* = try marshal.readObject();
             }
-            const tuple_obj = try Object.create(.tuple, allocator, objects);
+            const tuple_obj = try marshal.createObject(.tuple, .{ .value = objects });
             break :tuple tuple_obj;
         },
         .TYPE_REF => ref: {
             const index = marshal.readLong(false);
             try marshal.references.append(allocator, .{ .byte = marshal.cursor, .index = index });
             marshal.flag_refs.items[index].?.usages += 1;
-            break :ref try marshal.flag_refs.items[index].?.content.clone(allocator);
+            break :ref marshal.flag_refs.items[index].?.content;
         },
-        .TYPE_BINARY_FLOAT => float: {
-            const bytes = marshal.readBytes(8);
-            const float: f64 = @bitCast(bytes[0..8].*);
-            const float_obj = try Object.create(.float, allocator, float);
-            break :float float_obj;
-        },
+        // .TYPE_BINARY_FLOAT => float: {
+        //     const bytes = marshal.readBytes(8);
+        //     const float: f64 = @bitCast(bytes[0..8].*);
+        //     const float_obj = try marshal.createObject(.float, float);
+        //     break :float float_obj;
+        // },
         else => std.debug.panic("TODO: marshal.readObject {s}", .{@tagName(ty)}),
     };
 
@@ -189,33 +215,28 @@ fn readObject(marshal: *Marshal) Error!Object {
 fn readCodeObject(marshal: *Marshal) Error!CodeObject {
     const allocator = marshal.allocator;
 
-    const result: CodeObject = .{
-        .argcount = marshal.readLong(false),
-        .posonlyargcount = marshal.readLong(false),
-        .kwonlyargcount = marshal.readLong(false),
-        .nlocals = marshal.readLong(false),
-        .stacksize = marshal.readLong(false),
-        .flags = marshal.readLong(false),
-        .code = try marshal.readSingleString(),
-        .consts = try marshal.readObject(),
-        .names = try marshal.readObject(),
-        .varnames = varnames: {
-            const varnames = (try marshal.readObject()).get(.tuple);
-            break :varnames varnames;
-        },
-        .filename = blk: {
-            // skip freevars and cellvars
-            var freevars = try marshal.readObject();
-            freevars.deinit(allocator);
-            var cellvars = try marshal.readObject();
-            cellvars.deinit(allocator);
+    var result: CodeObject = undefined;
+    result.argcount = marshal.readLong(false);
+    result.posonlyargcount = marshal.readLong(false);
+    result.kwonlyargcount = marshal.readLong(false);
+    result.nlocals = marshal.readLong(false);
+    result.stacksize = marshal.readLong(false);
+    result.flags = marshal.readLong(false);
 
-            break :blk try marshal.readSingleString();
-        },
-        .name = try marshal.readSingleString(),
-        .firstlineno = marshal.readLong(false),
-        .lnotab_obj = try marshal.readObject(),
-    };
+    const code = try marshal.readSingleString();
+    defer marshal.allocator.free(code);
+
+    result.consts = try marshal.readObject();
+    result.names = try marshal.readObject();
+    result.varnames = try marshal.readObject();
+    _ = try marshal.readObject();
+    _ = try marshal.readObject();
+    result.filename = try marshal.readSingleString();
+    result.name = try marshal.readSingleString();
+    std.debug.print("name: {s}\n", .{result.name});
+    result.firstlineno = marshal.readLong(false);
+
+    try result.process(code, allocator);
 
     return result;
 }
@@ -239,9 +260,7 @@ fn readString(
     const size: u32 = maybe_size orelse
         if (short) marshal.readBytes(1)[0] else marshal.readLong(false);
 
-    const dst_string = try marshal.allocator.alloc(u8, size);
-    @memcpy(dst_string, marshal.readBytes(size));
-    return dst_string;
+    return marshal.allocator.dupe(u8, marshal.readBytes(size));
 }
 
 fn readBytes(marshal: *Marshal, n: usize) []const u8 {
@@ -250,8 +269,6 @@ fn readBytes(marshal: *Marshal, n: usize) []const u8 {
     return bytes;
 }
 
-// helper functions
-
 fn getVersion(magic_bytes: [4]u8) PythonVersion {
     const magic_number = readInt(u16, magic_bytes[0..2], .little);
 
@@ -259,10 +276,7 @@ fn getVersion(magic_bytes: [4]u8) PythonVersion {
         // We only support 3.10 bytecode
         3430...3439 => .{ .major = 3, .minor = 10 },
         // 3450...3495 => .{ .major = 3, .minor = 11 },
-        else => std.debug.panic(
-            "pyc compiled with unsupported magic: {d}",
-            .{magic_number},
-        ),
+        else => unreachable,
     };
 }
 
