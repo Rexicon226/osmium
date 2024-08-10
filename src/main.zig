@@ -139,7 +139,7 @@ pub fn main() !u8 {
         }
     }
 
-    file_path = "main.py";
+    // file_path = "main.py";
 
     if (file_path) |path| {
         try run_file(allocator, path, options);
