@@ -62,12 +62,38 @@ pub const builtin_fns = &.{
     .{ "print", print },
     .{ "getattr", getattr },
     .{ "__import__", __import__ },
+    .{ "len", len },
 
     // undocumented built-in functions
     .{ "__build_class__", __build_class__ },
 
     // // zig fmt: on
 };
+
+fn len(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+    if (null != maybe_kw) vm.fail("len() takes no positional arguments", .{});
+    if (args.len != 1) vm.fail("len() takes exactly one argument ({d} given)", .{args.len});
+
+    const t = tracer.trace(@src(), "builtin-len", .{});
+    defer t.end();
+
+    const arg = args[0];
+
+    const l =
+        switch (arg.tag) {
+        .list => arg.get(.list).list.items.len,
+        .set => arg.get(.set).set.count(),
+        .string => arg.get(.string).len,
+        .tuple => arg.get(.tuple).len,
+        .module => arg.get(.module).dict.count(),
+        else => vm.fail("object of type '{s}' has no len()", .{@tagName(arg.tag)}),
+    };
+
+    const val = try BigIntManaged.initSet(vm.allocator, l);
+    const length = try vm.createObject(.int, val);
+
+    try vm.stack.append(vm.allocator, length);
+}
 
 fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     if (null != kw) vm.fail("abs() has no kw args", .{});
