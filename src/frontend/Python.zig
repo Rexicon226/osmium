@@ -15,24 +15,21 @@ pub fn parse(
     filename: [:0]const u8,
     allocator: std.mem.Allocator,
 ) ![]const u8 {
-    const t = tracer.trace(@src(), "", .{});
-    defer t.end();
-
     try Initialize(allocator);
 
-    const compiled = helpers.CompileString(source, filename);
+    const compiled = bindings.CompileString(source, filename);
     if (null == compiled) {
-        helpers.PrintError();
+        bindings.PrintError();
         std.posix.exit(1);
     }
 
-    const bytecode = helpers.Marshal_WriteObjectToString(compiled);
+    const bytecode = bindings.Marshal_WriteObjectToString(compiled);
     if (null == bytecode) {
         return error.FailedToWriteObjectToString;
     }
 
-    const size = helpers.Bytes_Size(bytecode);
-    const ptr = helpers.Bytes_AsString(bytecode);
+    const size = bindings.Bytes_Size(bytecode);
+    const ptr = bindings.Bytes_AsString(bytecode);
     if (null == ptr) {
         return error.FailedToAsStringCode;
     }
@@ -52,8 +49,8 @@ pub fn parse(
     try writer.writeInt(u32, @intCast(source.len), .little);
     try writer.writeAll(pyc_bytes);
 
-    externs.Py_DecRef(bytecode);
-    externs.Py_Finalize();
+    bindings.Py_DecRef(bytecode);
+    bindings.Py_Finalize();
 
     return bytes;
 }
@@ -72,19 +69,19 @@ pub fn utf8ToUtf32Z(
 pub fn Initialize(
     allocator: std.mem.Allocator,
 ) !void {
-    var config: types.PyConfig = undefined;
-    externs.PyConfig_InitPythonConfig(&config);
-    defer externs.PyConfig_Clear(&config);
+    var config: bindings.PyConfig = undefined;
+    bindings.PyConfig_InitPythonConfig(&config);
+    defer bindings.PyConfig_Clear(&config);
 
     // mute some silly errors that probably do infact matter
     config.pathconfig_warnings = 0;
 
-    _ = externs.PyConfig_SetBytesString(
+    _ = bindings.PyConfig_SetBytesString(
         &config,
         &config.program_name,
         "osmium".ptr,
     );
-    _ = externs.PyConfig_Read(&config);
+    _ = bindings.PyConfig_Read(&config);
 
     const utf32_path = try utf8ToUtf32Z(
         build_options.lib_path,
@@ -93,12 +90,12 @@ pub fn Initialize(
     defer allocator.free(utf32_path);
 
     config.module_search_paths_set = 1;
-    _ = externs.PyWideStringList_Append(
+    _ = bindings.PyWideStringList_Append(
         &config.module_search_paths,
         utf32_path.ptr,
     );
 
-    const status = externs.Py_InitializeFromConfig(&config);
+    const status = bindings.Py_InitializeFromConfig(&config);
     // needs to be a pointer discard because the stack protector gets overrun?
     _ = &status;
 }
@@ -110,10 +107,6 @@ const std = @import("std");
 
 const log = std.log.scoped(.python);
 
-const cpython = @import("cpython");
-const types = cpython.types;
-const helpers = cpython.helpers;
-const externs = cpython.externs;
+const bindings = @import("../bindings.zig");
 
-const tracer = @import("tracer");
 const build_options = @import("options");

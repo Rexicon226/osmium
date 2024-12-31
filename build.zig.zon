@@ -9,22 +9,22 @@
         "README.md",
     },
     .dependencies = .{
-        .tracer = .{
-            .url = "https://github.com/Rexicon226/zig-tracer/archive/6400e066bb3849be4906f3b6e124d6c8c5a5083f.tar.gz",
-            .hash = "122057453dba0b0cf6f07610d692cc7ab3f1d66defa150c936b398144812564a0c08",
+        // .libvaxis = .{
+        //     .url = "https://github.com/rockorager/libvaxis/archive/c213919849114ce03def64806af546b9fc391859.tar.gz",
+        //     .hash = "12206f2265ca2262f919ec125ff7fe15fa6f3be622806e211d7a9bd3055ba51a0908",
+        //     .lazy = true,
+        // },
+        .libz = .{
+            .url = "git+https://github.com/allyourcodebase/zlib#0918e87b7629b9c6a50a08edd0ce30d849758faf",
+            .hash = "122034ab2a12adf8016ffa76e48b4be3245ffd305193edba4d83058adbcfa749c107",
         },
-        .libgc = .{
-            .url = "https://github.com/Rexicon226/zig-libgc/archive/1ea12e140ec1471af5d15dae71b225764c9747ba.tar.gz",
-            .hash = "12209ad7282d9422973afe3e468e2f867bb102d04fa446a1d1c94f900bda94b7c68e",
+        .openssl = .{
+            .url = "git+https://github.com/kassane/openssl-zig#0cbd913c1fb26fcce1b0b31e82d9b880224515ed",
+            .hash = "1220162cad408b6f7eeb6b49733e75ebdb684da77d15bc24d04114b8aaaaa4d7ded6",
         },
-        .libvaxis = .{
-            .url = "https://github.com/rockorager/libvaxis/archive/c213919849114ce03def64806af546b9fc391859.tar.gz",
-            .hash = "12206f2265ca2262f919ec125ff7fe15fa6f3be622806e211d7a9bd3055ba51a0908",
-            .lazy = true,
-        },
-        .cpython = .{
-            .url = "https://github.com/Rexicon226/zig-cpython/archive/969708680122dc4548d64adfae041261e2af480c.tar.gz",
-            .hash = "1220240c0fd3b1b062483c3f9f41b610181cdf70a47e047ae6379247178b20c34024",
+        .python = .{
+            .url = "git+https://github.com/Rexicon226/cpython#9b10a35f913f9f0c2f6356a8d8eef19b10b811b9",
+            .hash = "122027a5b201ec3f02bb6acb2c148fbbd0af9c22bf67df978ebf63203e1ff88a81c1",
         },
     },
 }

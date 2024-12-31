@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Creates a temporal graph of a CodeObject
-
 const std = @import("std");
 const CodeObject = @import("../compiler/CodeObject.zig");
 const Instruction = @import("../compiler/Instruction.zig");

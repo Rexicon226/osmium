@@ -6,7 +6,6 @@
 // NOTE: Builtin functions are expected to append their returns to the stack themselves.
 
 const std = @import("std");
-const tracer = @import("tracer");
 
 const Object = @import("../vm/Object.zig");
 const Module = Object.Payload.Module;
@@ -72,9 +71,6 @@ pub const builtin_fns = &.{
 fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     if (null != kw) vm.fail("abs() has no kw args", .{});
 
-    const t = tracer.trace(@src(), "builtin-abs", .{});
-    defer t.end();
-
     if (args.len != 1) vm.fail("abs() takes exactly one argument ({d} given)", .{args.len});
 
     const arg = args[0];
@@ -95,9 +91,6 @@ fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
 }
 
 fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
-    const t = tracer.trace(@src(), "builtin-print", .{});
-    defer t.end();
-
     const stdout = std.io.getStdOut().writer();
 
     for (args, 0..) |arg, i| {
@@ -210,9 +203,6 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
 
 /// https://docs.python.org/3.10/library/stdtypes.html#truth
 fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
-    const t = tracer.trace(@src(), "builtin-bool", .{});
-    defer t.end();
-
     if (null != kw) vm.fail("bool() has no kw args", .{});
     if (args.len > 1) vm.fail("bool() takes at most 1 arguments ({d} given)", .{args.len});
     if (args.len == 0) vm.fail("bool() takes 1 argument, 0 given", .{});

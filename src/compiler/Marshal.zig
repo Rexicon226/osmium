@@ -9,7 +9,6 @@ const ObjType = @import("objtype.zig").ObjType;
 const CodeObject = @import("CodeObject.zig");
 const Object = @import("../vm/Object.zig");
 const Vm = @import("../vm/Vm.zig");
-const tracer = @import("tracer");
 const BigIntManaged = std.math.big.int.Managed;
 
 const Marshal = @This();
@@ -90,9 +89,6 @@ fn createObject(marshal: *Marshal, comptime tag: Object.Tag, data: anytype) !*co
 }
 
 pub fn parse(marshal: *Marshal) !*const CodeObject {
-    const t = tracer.trace(@src(), "", .{});
-    defer t.end();
-
     var co_obj = try marshal.readObject();
     const co = co_obj.get(.codeobject);
     return &co.value;
@@ -139,9 +135,6 @@ fn readSingleString(marshal: *Marshal) ![]const u8 {
 }
 
 fn readObject(marshal: *Marshal) Error!*const Object {
-    const t = tracer.trace(@src(), "", .{});
-    defer t.end();
-
     const allocator = marshal.allocator;
     var next_byte = marshal.bytes[marshal.cursor];
     marshal.cursor += 1;

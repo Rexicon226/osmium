@@ -16,17 +16,6 @@ const Vm = @import("vm/Vm.zig");
 const Object = @import("vm/Object.zig");
 const debug = if (build_options.build_debug) @import("vm/debug.zig") else {};
 
-const tracer = @import("tracer");
-const tracer_backend = build_options.backend;
-pub const tracer_impl = switch (tracer_backend) {
-    .Chrome => tracer.chrome,
-    .Spall => tracer.spall,
-    .None => tracer.none,
-};
-
-const gc = @import("gc");
-const GcAllocator = gc.GcAllocator;
-
 const main_log = std.log.scoped(.main);
 
 const version = "0.1.0";
@@ -86,20 +75,8 @@ pub fn main() !u8 {
         @panic("osmium doesn't support non-libc compilations yet");
     };
     defer {
-        if (gpa.deinit() == .leak) @panic("leaked"); // it should fail for tests
-
-        if (tracer_backend != .None) {
-            tracer.deinit();
-            tracer.deinit_thread();
-        }
-    }
-    defer log_scopes.deinit(allocator);
-
-    if (tracer_backend != .None) {
-        const dir = try std.fs.cwd().makeOpenPath("traces/", .{});
-
-        try tracer.init();
-        try tracer.init_thread(dir);
+        log_scopes.deinit(allocator);
+        _ = gpa.deinit();
     }
 
     var args = try std.process.ArgIterator.initWithAllocator(allocator);
@@ -191,37 +168,34 @@ pub fn runFile(
     file_name: [:0]const u8,
     options: Args,
 ) !void {
-    const t = tracer.trace(@src(), "", .{});
-    defer t.end();
+    _ = options;
 
     // const gc_allocator = gc.allocator();
     // gc.enable();
     // gc.setFindLeak(build_options.enable_logging);
     // defer gc.collect();
 
-    const source_file = std.fs.cwd().openFile(file_name, .{ .lock = .exclusive }) catch |err| {
-        switch (err) {
-            error.FileNotFound => @panic("invalid file provided"),
-            else => |e| return e,
-        }
-    };
+    const source_file = try std.fs.cwd().openFile(file_name, .{ .lock = .exclusive });
     defer source_file.close();
+
     const source_file_size = (try source_file.stat()).size;
-    const source = try source_file.readToEndAllocOptions(allocator, source_file_size, source_file_size, @alignOf(u8), 0);
+    const source = try source_file.readToEndAllocOptions(
+        allocator,
+        source_file_size,
+        null,
+        @alignOf(u8),
+        0,
+    );
     defer allocator.free(source);
 
     const pyc = try Python.parse(source, file_name, allocator);
     defer allocator.free(pyc);
 
-    var marshal = try Marshal.init(allocator, pyc);
-    // defer Object.alive_map.deinit(gc_allocator);
-    defer marshal.deinit();
+    std.debug.print("pyc: {x}\n", .{pyc});
 
-    _ = options;
-
-    const seed = try marshal.parse();
-    _ = seed;
-
+    // var marshal = try Marshal.init(allocator, pyc);
+    // // defer Object.alive_map.deinit(gc_allocator);
+    // defer marshal.deinit();
     // var graph = try Graph.evaluate(gc_allocator, seed);
     // defer graph.deinit();
 

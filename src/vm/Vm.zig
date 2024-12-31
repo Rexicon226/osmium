@@ -13,7 +13,6 @@ const BigIntConst = std.math.big.int.Const;
 const BigIntMutable = std.math.big.int.Mutable;
 const BigIntManaged = std.math.big.int.Managed;
 
-const tracer = @import("tracer");
 const CodeObject = @import("../compiler/CodeObject.zig");
 const Instruction = @import("../compiler/Instruction.zig");
 const Marshal = @import("../compiler/Marshal.zig");
@@ -57,9 +56,6 @@ builtin_mods: std.StringHashMapUnmanaged(Object.Payload.Module) = .{},
 
 /// Takes ownership of `co`.
 pub fn init(allocator: Allocator, co: CodeObject) !Vm {
-    const t = tracer.trace(@src(), "", .{});
-    defer t.end();
-
     return .{
         .allocator = allocator,
         .is_running = false,
@@ -114,8 +110,6 @@ pub fn initBuiltinMods(vm: *Vm, mod_path: []const u8) !void {
 pub fn run(
     vm: *Vm,
 ) !void {
-    const t = tracer.trace(@src(), "", .{});
-    defer t.end();
 
     // create the immediate scope
     assert(vm.scopes.items.len == 0);
@@ -181,9 +175,6 @@ pub fn deinit(vm: *Vm) void {
 }
 
 fn exec(vm: *Vm, inst: Instruction) !void {
-    const t = tracer.trace(@src(), "{s}", .{@tagName(inst.op)});
-    defer t.end();
-
     // https://docs.python.org/3.10/library/dis.html
     switch (inst.op) {
         // zig fmt: off
